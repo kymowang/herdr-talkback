@@ -1,0 +1,140 @@
+# [] accepts the current live Herdr agent labels. Rules still require explicit agents scopes.
+roles = []
+
+[delivery]
+max_attempts = 60
+retry_interval_seconds = 30
+verify_timeout_ms = 5000
+
+[monitor]
+unknown_threshold_seconds = 60
+continue_cooldown_seconds = 120
+max_continues_per_30m = 3
+
+[notify]
+enabled = true
+position = "bottom-right"
+sound = "none"
+
+# Editable rules. agents match pane labels, agent_types optionally match CLI types.
+# max_per_30m = 0 means unlimited; rules are evaluated in order.
+
+[[recovery_rules]]
+id = "stream disconnected before completion"
+agents = ["*"]
+statuses = ["idle", "done", "blocked", "unknown"]
+patterns = ["^\\s*\u25a0\\s*stream disconnected before completion:\\s*error sending request\\b"]
+command = "continue"
+window = "latest_turn"
+max_per_30m = 0
+
+[[recovery_rules]]
+id = "request timed out"
+agents = ["*"]
+statuses = ["idle", "done", "blocked", "unknown"]
+patterns = ["^\\s*\u25a0\\s*request\\s+timed\\s+out\\b"]
+command = "continue"
+window = "latest_turn"
+max_per_30m = 0
+
+[[recovery_rules]]
+id = "api error"
+agents = ["*"]
+statuses = ["idle", "done"]
+patterns = ["^\\s*\u25cf\\s*api error\\b"]
+command = "continue"
+window = "latest_turn"
+
+[[recovery_rules]]
+id = "rate limit"
+agents = ["*"]
+statuses = ["idle", "done"]
+patterns = ["^\\s*\u25cf\\s*.*\\brate limit(?:ed)?\\b"]
+command = "continue"
+window = "latest_turn"
+
+[[recovery_rules]]
+id = "overloaded"
+agents = ["*"]
+statuses = ["idle", "done"]
+patterns = ["^\\s*\u25cf\\s*.*\\boverloaded\\b"]
+command = "continue"
+window = "latest_turn"
+
+[[recovery_rules]]
+id = "connection error"
+agents = ["*"]
+statuses = ["idle", "done"]
+patterns = ["^\\s*\u25cf\\s*connection error\\b"]
+command = "continue"
+window = "latest_turn"
+
+[[recovery_rules]]
+id = "temporarily unavailable"
+agents = ["*"]
+statuses = ["idle", "done"]
+patterns = ["^\\s*\u25cf\\s*.*\\btemporarily unavailable\\b"]
+command = "continue"
+window = "latest_turn"
+
+[[recovery_rules]]
+id = "api error (blocked)"
+agents = ["*"]
+statuses = ["blocked", "unknown"]
+patterns = ["api error"]
+command = "continue"
+window = "recent"
+
+[[recovery_rules]]
+id = "rate limit (blocked)"
+agents = ["*"]
+statuses = ["blocked", "unknown"]
+patterns = ["rate limit"]
+command = "continue"
+window = "recent"
+
+[[recovery_rules]]
+id = "overloaded (blocked)"
+agents = ["*"]
+statuses = ["blocked", "unknown"]
+patterns = ["overloaded"]
+command = "continue"
+window = "recent"
+
+[[recovery_rules]]
+id = "timeout (blocked)"
+agents = ["*"]
+statuses = ["blocked", "unknown"]
+patterns = ["timeout"]
+command = "continue"
+window = "recent"
+
+[[recovery_rules]]
+id = "connection error (blocked)"
+agents = ["*"]
+statuses = ["blocked", "unknown"]
+patterns = ["connection error"]
+command = "continue"
+window = "recent"
+
+[[recovery_rules]]
+id = "temporarily unavailable (blocked)"
+agents = ["*"]
+statuses = ["blocked", "unknown"]
+patterns = ["temporarily unavailable"]
+command = "continue"
+window = "recent"
+
+[[recovery_rules]]
+id = "try again (blocked)"
+agents = ["*"]
+statuses = ["blocked", "unknown"]
+patterns = ["try again"]
+command = "continue"
+window = "recent"
+
+[[message_rules]]
+id = "task-receipt"
+agents = ["lead", "lead2", "scheduler"]
+targets = ["*"]
+append = "上述内容如果是任务而非通知，完成后请发回执给我"
