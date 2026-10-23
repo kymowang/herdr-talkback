@@ -43,6 +43,10 @@ def test_https_admission_duplicate_and_receipt(tmp_path):
             assert len(store.state.list_messages()) == 1
             assert wakes == ['receiver/agent', 'receiver/agent']
             assert (await client.request('GET', '/v1/messages/msg_test'))['state'] == 'queued'
+            unicode_message = envelope('msg_unicode')
+            unicode_message['body'] = '\u6d4b' * 21845  # 65535 UTF-8 bytes, below the body limit.
+            unicode_receipt = await client.request('POST', '/v1/messages', unicode_message)
+            assert unicode_receipt['state'] == 'queued'
             bad = envelope()
             bad['source_endpoint'] = 'stranger/agent'
             with pytest.raises(PeerHTTPError) as exc:
@@ -61,7 +65,7 @@ def test_https_admission_duplicate_and_receipt(tmp_path):
             with pytest.raises(PeerHTTPError) as exc:
                 await client.request('POST', '/v1/messages', envelope('msg_after_reset'))
             assert exc.value.status == 412
-            assert len(store.state.list_messages()) == 1
+            assert len(store.state.list_messages()) == 2
 
     asyncio.run(scenario())
 

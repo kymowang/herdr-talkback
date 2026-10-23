@@ -127,7 +127,8 @@ class PeerClient:
         async with self.limit:
             connector = aiohttp.TCPConnector(ssl=self.context, force_close=True)
             timeout = aiohttp.ClientTimeout(total=10, connect=3)
-            async with aiohttp.ClientSession(connector=connector, timeout=timeout, trust_env=False) as session:
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout, trust_env=False,
+                    json_serialize=lambda value: json.dumps(value, ensure_ascii=False, allow_nan=False)) as session:
                 async with session.request(method, self.peer.url + path, json=envelope,
                                            headers=headers, allow_redirects=False) as response:
                     if response.status not in (200, 202):
