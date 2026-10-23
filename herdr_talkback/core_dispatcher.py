@@ -16,7 +16,7 @@ from .core_types import (
 from .endpoints import EndpointNotFound
 
 
-RECOVERABLE_ADAPTERS = ()
+RECOVERABLE_ADAPTERS = ('peer',)
 DEFAULT_RETRY_DELAY_SECONDS = 1.0
 
 

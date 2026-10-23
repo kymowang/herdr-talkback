@@ -139,6 +139,71 @@ herdr-talkback pane name-from-tab --all --force
 
 ## 开发验证
 
+## 跨主机通信（HTTPS 短连接）
+
+跨主机功能默认关闭。两端都安装网络依赖，监听独立端口，通过普通 HTTPS
+请求收发消息；空闲时没有心跳或轮询。默认端口为 TCP **18765**，可在配置中修改。
+
+```bash
+python -m pip install -e '.[network]'
+herdr-talkback peer init-tls --directory /path/to/plugin-config/tls --host 192.168.90.18
+```
+
+Windows 使用自己的 IP，例如 `--host 192.168.60.55`。该命令生成 `node.crt`、
+`node.key` 和随机 `pair.token`，不会输出私密内容，也不会覆盖已有文件；
+确需重新生成时使用 `--force`。每端保留自己的私钥，把**公开证书**复制给对端；
+同一对节点使用同一个 `pair.token`，通过可信渠道交换，勿提交到 Git。
+
+Windows 示例（加入插件 `config.toml`；相对路径以配置目录为基准）：
+
+```toml
+[core]
+node_id = "linux-main"
+
+[network]
+enabled = true
+listen_host = "192.168.60.55"
+listen_port = 18765
+cert_file = "tls/node.crt"
+key_file = "tls/node.key"
+
+[peers.openclaw]
+url = "https://192.168.90.18:18765"
+ca_file = "tls/openclaw.crt"
+token_file = "tls/pair.token"
+```
+
+Linux 端将本机 `node_id` 设置为 `openclaw`，监听 `192.168.90.18`；对端表使用
+`[peers.linux-main]`，URL 为 `https://192.168.60.55:18765`，CA 指向 Windows 的公开证书。
+有历史消息的节点保持原本的 `core.node_id`；两端 ID 必须不同。
+证书必须包含 URL 中的 IP/主机名，不能关闭证书验证。
+配置中已有 `[core]` 时修改原表，不要重复声明。
+
+两端防火墙只向对端 IP 放行该 TCP 端口。修改配置后先运行插件 `check`，再关闭
+Talkback 服务 pane 并执行 `start`。每个网络端口属于一个 Herdr 会话，多会话须使用
+不同的配置和端口；离线对端不会阻止本地服务启动。
+
+```bash
+CFG="$(herdr plugin config-dir herdr-talkback)/config.toml"
+herdr-talkback --config "$CFG" peers list
+herdr-talkback --config "$CFG" peers check openclaw
+herdr-talkback --config "$CFG" send '[talkback->openclaw/worker] 测试消息'
+herdr-talkback --config "$CFG" message status msg_xxx --json
+```
+
+反向发送在 Linux 端执行，例如 `[worker->linux-main/talkback] 收到`。
+消息先持久化，再发送；远端确认入队后，本端继续查询最终投递回执。
+断网时按递增间隔重试，重启后使用相同消息 ID 续查/去重，不自动丢弃待发消息。
+`--direct` 仅用于本机，不能绕过跨机队列。
+
+`queued`/`accepted` 不等于 Pane 已收到，以 `message status` 的最终 `delivered`
+为准。`delivery_unknown` 表示不能排除 Pane 已接收，不自动重复提交；人工 `retry`
+是一次新投递，可能重复原消息。接收端更换/清空数据库后，实例 ID 会改变，发送端会
+停止自动重放；应人工核对未完成消息，不能通过删除身份记录来强行重放。
+消息归档不会删除跨机去重记录和最终回执。
+
+## 开发验证
+
 ```bash
 python3 -m pip install -e '.[test]'
 python3 -m pytest -q

@@ -138,3 +138,18 @@ id = "task-receipt"
 agents = ["lead", "lead2", "scheduler"]
 targets = ["*"]
 append = "上述内容如果是任务而非通知，完成后请发回执给我"
+
+
+# Optional peer HTTPS listener. Install .[network] and provision certificates first.
+[network]
+enabled = false
+listen_host = "127.0.0.1"
+listen_port = 18765
+# cert_file = "tls/node.crt"
+# key_file = "tls/node.key"
+
+# Give the other machine a distinct [core].node_id and configure the reciprocal peer.
+# [peers.openclaw]
+# url = "https://192.168.90.18:18765"
+# ca_file = "tls/openclaw.crt"
+# token_file = "tls/pair.token"

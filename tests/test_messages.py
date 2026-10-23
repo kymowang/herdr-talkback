@@ -17,7 +17,7 @@ def test_parse_valid_role_message():
     assert msg.target == "dev-back"
     assert msg.resolved_target == "dev-back"
     assert msg.body == "新任务 TASK-0001"
-    assert re.match(r"^msg_[0-9a-f]{16}$", msg.message_id)
+    assert re.match(r"^msg_[0-9a-f]{32}$", msg.message_id)
 
 
 def test_parse_valid_ascii_arrow_message():

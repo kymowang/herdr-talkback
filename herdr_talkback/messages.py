@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import re
-import time
+import uuid
 from typing import Mapping, Sequence
 
 from .addressing import EndpointAddress, parse_endpoint_address, validate_node_id
@@ -82,8 +81,7 @@ def parse_message(
         body += "\n" + suffix
         raw_text += "\n" + suffix
 
-    digest = hashlib.sha256(f"{time.time_ns()}|{source}|{target}|{body}".encode("utf-8")).hexdigest()[:16]
-    message_id = f"msg_{digest}"
+    message_id = 'msg_' + uuid.uuid4().hex
     return RoutedMessage(
         message_id=message_id,
         source=source,

@@ -110,6 +110,15 @@ class TalkbackService:
 async def run_service(config, dry_run: bool = False) -> int:
     client = HerdrClient(config.socket_path)
     role_registry = RoleRegistry(client, config.roles, config.aliases)
+    network_enabled = getattr(getattr(config, 'network', None), 'enabled', False)
+    if network_enabled:
+        try:
+            from .adapters.peer import PeerAdapter
+            from .peer_http import PeerServer
+            from .peer_state import PeerStore
+        except ImportError as exc:
+            raise RuntimeError('network support requires: pip install herdr-talkback[network]') from exc
+        config.network.server_context()
     if dry_run:
         await role_registry.refresh()
         await client.check_subscription(_subscriptions(role_registry))
@@ -137,13 +146,27 @@ async def run_service(config, dry_run: bool = False) -> int:
     endpoint_registry = EndpointRegistry()
     endpoint_registry.register(config.core_node_id, await adapter.refresh())
     adapters = {adapter.name: adapter}
+    peer_adapter = None
+    peer_server = None
+    if network_enabled:
+        from .addressing import EndpointAddress, parse_endpoint_address
+        peer_store = PeerStore(state)
+        peer_adapter = PeerAdapter(config, peer_store, endpoint_registry)
+        adapters[peer_adapter.name] = peer_adapter
+        for row in state.list_active_messages():
+            target = parse_endpoint_address(row['target_endpoint'])
+            if isinstance(target, EndpointAddress) and target.node_id in config.peers:
+                peer_adapter.ensure_endpoint(target)
     dispatcher = CoreDispatcher(state, endpoint_registry, adapters)
+    if network_enabled:
+        peer_server = PeerServer(config, peer_store, dispatcher)
     daemon_router = DaemonMessageRouter(
         config,
         role_registry,
         dispatcher,
         state=state,
         notifier=notifier,
+        peer_adapter=peer_adapter,
     )
     inbox = DaemonInboxServer(config.daemon_socket_path, daemon_router.handle)
     monitor = Monitor(
@@ -169,8 +192,13 @@ async def run_service(config, dry_run: bool = False) -> int:
     )
 
     try:
-        await dispatcher.recover()
-        await service.run_forever()
+        if peer_server is not None:
+            async with peer_server:
+                await dispatcher.recover()
+                await service.run_forever()
+        else:
+            await dispatcher.recover()
+            await service.run_forever()
     finally:
         await dispatcher.close()
     return 0

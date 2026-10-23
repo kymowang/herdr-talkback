@@ -88,12 +88,13 @@ class DaemonInboxServer:
 
 
 class DaemonMessageRouter:
-    def __init__(self, config, registry, dispatcher, state=None, notifier=None) -> None:
+    def __init__(self, config, registry, dispatcher, state=None, notifier=None, peer_adapter=None) -> None:
         self.config = config
         self.registry = registry
         self.dispatcher = dispatcher
         self.state = state
         self.notifier = notifier or NullNotifier()
+        self.peer_adapter = peer_adapter
         self._lock = asyncio.Lock()
 
     async def handle(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -117,8 +118,14 @@ class DaemonMessageRouter:
                 if not isinstance(target, EndpointAddress):
                     raise AssertionError("canonical target endpoint must be qualified")
                 if target.node_id != self.config.core_node_id:
-                    raise MessageParseError("only local Herdr targets are supported")
-                pane_id = self.registry.resolve_pane(target.endpoint_id)
+                    if self.peer_adapter is None:
+                        raise MessageParseError("only local Herdr targets are supported; configure a network peer first")
+                    self.peer_adapter.ensure_endpoint(target)
+                    from .peer_state import validate_envelope, message_envelope
+                    validate_envelope(self.config.core_node_id, target.node_id, message_envelope(message))
+                    pane_id = ''
+                else:
+                    pane_id = self.registry.resolve_pane(target.endpoint_id)
             except MessageParseError as exc:
                 await self._notify_send_failed(raw_message, str(exc))
                 return {"ok": False, "error": str(exc)}

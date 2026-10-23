@@ -182,7 +182,7 @@ def test_daemon_router_duplicate_message_id_does_not_wake_twice(tmp_path, monkey
 
 
 async def _daemon_router_duplicate_message_id_does_not_wake_twice(tmp_path, monkeypatch):
-    monkeypatch.setattr("herdr_talkback.messages.time.time_ns", lambda: 123456789)
+    monkeypatch.setattr("herdr_talkback.messages.uuid.uuid4", lambda: SimpleNamespace(hex='a' * 32))
     registry = FakeRegistry()
     state = TalkbackState(tmp_path / "state.db")
     state.init()

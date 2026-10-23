@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from .addressing import validate_node_id
+from .network_config import NetworkConfig, load_network
 from .rules import parse_recovery_rules, parse_message_rules, RecoveryRule, MessageRule
 
 try:
@@ -44,6 +45,8 @@ class TalkbackConfig:
     notify_position: str = "bottom-right"
     notify_sound: str = "none"
     alerts_pane_role: Optional[str] = None
+    network: NetworkConfig = field(default_factory=NetworkConfig)
+    peers: Mapping[str, Any] = field(default_factory=dict)
 
 
 def default_state_path() -> Path:
@@ -90,6 +93,8 @@ def load_config(path: Optional[Path]) -> TalkbackConfig:
         raise ValueError("remote Node configuration is no longer supported; use local Herdr panes")
     aliases = dict(DEFAULT_ALIASES)
     aliases.update(_mapping(raw.get("aliases")))
+    node_id = validate_node_id(core.get("node_id", "linux-main"))
+    network, peers = load_network(raw, resolved_path, node_id)
 
     return TalkbackConfig(
         socket_path=Path(raw.get("socket_path") or default_socket_path()),
@@ -110,6 +115,8 @@ def load_config(path: Optional[Path]) -> TalkbackConfig:
         notify_position=str(notify.get("position", "bottom-right")),
         notify_sound=str(notify.get("sound", "none")),
         alerts_pane_role=_optional_string(alerts.get("pane_role")),
+        network=network,
+        peers=peers,
     )
 
 

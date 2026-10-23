@@ -13,7 +13,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.9/3.10
     import tomli as tomllib  # type: ignore[import, no-redef]
 
-from .addressing import validate_node_id
+from .addressing import validate_node_id, parse_endpoint_address, EndpointAddress
 from .config import configured_path, default_config_path, default_daemon_socket_path, default_state_path, load_config
 from .daemon import submit_daemon_request
 from .delivery import DeliveryService
@@ -34,6 +34,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="herdr-talkback")
     parser.add_argument("--config", type=Path)
     sub = parser.add_subparsers(dest="command", required=True)
+
+    peer = sub.add_parser('peer', help='Provision peer credentials')
+    peer_sub = peer.add_subparsers(dest='peer_command', required=True)
+    tls = peer_sub.add_parser('init-tls')
+    tls.add_argument('--directory', type=Path, required=True)
+    tls.add_argument('--host', action='append', required=True)
+    tls.add_argument('--force', action='store_true')
+    peers = sub.add_parser('peers', help='Inspect configured network peers')
+    peers_sub = peers.add_subparsers(dest='peers_command', required=True)
+    peers_list = peers_sub.add_parser('list')
+    peers_list.add_argument('--json', action='store_true')
+    check_peer = peers_sub.add_parser('check')
+    check_peer.add_argument('node_id')
+    check_peer.add_argument('--json', action='store_true')
+    message = sub.add_parser('message', help='Inspect durable message delivery')
+    message_sub = message.add_subparsers(dest='message_command', required=True)
+    message_status = message_sub.add_parser('status')
+    message_status.add_argument('message_id')
+    message_status.add_argument('--json', action='store_true')
 
     sub.add_parser("panes")
     pane = sub.add_parser("pane", help="Inspect and name Herdr panes")
@@ -93,6 +112,35 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 
 async def _main_async(args) -> int:
+    if args.command == 'peer':
+        try:
+            from .certificates import provision
+            paths = provision(args.directory, args.host, args.force)
+        except (ImportError, ValueError, OSError) as exc:
+            print(f'Credential provisioning failed ({type(exc).__name__}); install the network extra and check existing files.')
+            return 1
+        print('Created credentials (private contents are not printed):')
+        for path in paths:
+            print(path)
+        return 0
+
+    if args.command == 'message':
+        from .peer_state import PeerStore
+        state = _load_read_state(args.config)
+        try:
+            row = state.get_message(args.message_id)
+        except KeyError:
+            print(f'message not found: {args.message_id}')
+            return 1
+        diagnostic = {key: row[key] for key in ('message_id', 'source_endpoint', 'target_endpoint',
+                                               'state', 'reason', 'attempts')}
+        diagnostic['peer'] = PeerStore(state).progress(args.message_id)
+        if args.json:
+            print(json.dumps(diagnostic, ensure_ascii=False))
+        else:
+            for key, value in diagnostic.items():
+                print(f'{key}: {json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else value}')
+        return 0
     if args.command == "tail":
         state = _load_read_state(args.config)
         for event in state.tail_events(args.limit):
@@ -164,6 +212,28 @@ async def _main_async(args) -> int:
         return 0 if response.get("ok") else 1
 
     cfg = load_config(args.config)
+
+    if args.command == 'peers':
+        if args.peers_command == 'list':
+            values = [{'node_id': node, 'url': peer.url} for node, peer in sorted(cfg.peers.items())]
+            if args.json:
+                print(json.dumps(values, ensure_ascii=False))
+            else:
+                print('NODE  URL')
+                for item in values:
+                    print(f"{item['node_id']}  {item['url']}")
+            return 0
+        if args.node_id not in cfg.peers:
+            print(f'peer not configured: {args.node_id}')
+            return 1
+        try:
+            from .peer_http import PeerClient
+            info = await PeerClient(cfg.core_node_id, cfg.peers[args.node_id]).request('GET', '/v1/info')
+        except Exception as exc:
+            print(f'Peer check failed ({type(exc).__name__})')
+            return 1
+        print(json.dumps(info, ensure_ascii=False))
+        return 0
 
     if args.command == "serve":
         from .service import run_service
@@ -292,6 +362,9 @@ async def _main_async(args) -> int:
                 local_node_id=local_node_id,
                 message_rules=getattr(cfg, "message_rules", ()),
             )
+            target_address = parse_endpoint_address(message.target_endpoint)
+            if isinstance(target_address, EndpointAddress) and target_address.node_id != local_node_id:
+                raise ValueError('remote messages require the durable daemon path; --direct is local-only')
             pane_id = registry.resolve_pane(message.resolved_target)
         except Exception as exc:
             state = TalkbackState(cfg.state_path, local_node_id=local_node_id)
