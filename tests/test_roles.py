@@ -49,3 +49,24 @@ async def _missing_role_raises():
 
     with pytest.raises(RoleResolutionError):
         registry.resolve_pane("runner")
+
+
+def test_display_titles_do_not_become_message_roles():
+    class Client(FakeClient):
+        async def request(self, method, params):
+            result = await super().request(method, params)
+            result['panes'].append({
+                'label': 'Talkback service', 'pane_id': 'p-service',
+                'workspace_id': 'w1', 'tab_id': 't4',
+            })
+            return result
+
+    async def scenario():
+        registry = RoleRegistry(Client(), roles=(), aliases={})
+        await registry.refresh()
+        assert 'Talkback service' not in registry.snapshot()
+        assert registry.role_for_pane('p-service') is None
+        assert registry.get_pane('p-service').name == 'Talkback service'
+        assert registry.resolve_pane('alerts') == 'p-alerts'
+
+    asyncio.run(scenario())

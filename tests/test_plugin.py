@@ -8,9 +8,10 @@ from herdr_talkback.config import load_config
 
 def test_manifest_and_commands():
     from herdr_talkback.config import tomllib
-    manifest = tomllib.loads(Path('herdr-plugin.toml').read_text())
+    manifest = tomllib.loads(Path('herdr-plugin.toml').read_text(encoding='utf-8'))
     assert manifest['id'] == 'herdr-talkback'
-    assert manifest['startup'][0]['command'] == ['python3', 'plugin.py', 'start']
+    assert set(manifest['platforms']) == {'linux', 'macos', 'windows'}
+    assert manifest['startup'][0]['command'] == ['herdr-talkback-plugin', 'start']
     assert {a['id'] for a in manifest['actions']} >= {'start', 'check', 'queue'}
     assert manifest['panes'][0]['id'] == 'service'
 

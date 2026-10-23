@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Optional
 
+from .transport import LocalServer, open_local_connection, start_local_server
 from .addressing import EndpointAddress, parse_endpoint_address
 from .core_types import CoreMessage, CoreMessageState
 from .messages import MessageParseError, parse_message
@@ -16,7 +17,7 @@ DaemonHandler = Callable[[Mapping[str, Any]], Awaitable[Mapping[str, Any]]]
 
 
 async def submit_daemon_request(socket_path: Path, payload: Mapping[str, Any]) -> dict[str, Any]:
-    reader, writer = await asyncio.open_unix_connection(str(socket_path))
+    reader, writer = await open_local_connection(socket_path)
     try:
         writer.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
         await writer.drain()
@@ -36,13 +37,13 @@ class DaemonInboxServer:
     def __init__(self, socket_path: Path, handler: DaemonHandler) -> None:
         self.socket_path = Path(socket_path)
         self.handler = handler
-        self._server: Optional[asyncio.AbstractServer] = None
+        self._server: Optional[LocalServer] = None
 
     async def serve_forever(self) -> None:
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         if self.socket_path.exists():
             self.socket_path.unlink()
-        self._server = await asyncio.start_unix_server(self._handle_client, path=str(self.socket_path))
+        self._server = await start_local_server(self._handle_client, self.socket_path)
         try:
             await self._server.serve_forever()
         finally:
@@ -58,24 +59,32 @@ class DaemonInboxServer:
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
-            line = await reader.readline()
-            if not line:
-                response: Mapping[str, Any] = {"ok": False, "error": "empty daemon request"}
-            else:
-                payload = json.loads(line.decode("utf-8"))
-                if not isinstance(payload, dict):
-                    response = {"ok": False, "error": "daemon request must be a JSON object"}
+            try:
+                line = await reader.readline()
+                if not line:
+                    # Startup probes connect and immediately close without a request.
+                    return
                 else:
-                    response = await self.handler(payload)
-        except json.JSONDecodeError as exc:
-            response = {"ok": False, "error": f"invalid JSON request: {exc.msg}"}
-        except Exception as exc:  # pragma: no cover - defensive daemon boundary
-            response = {"ok": False, "error": str(exc)}
+                    payload = json.loads(line.decode("utf-8"))
+                    if not isinstance(payload, dict):
+                        response: Mapping[str, Any] = {"ok": False, "error": "daemon request must be a JSON object"}
+                    else:
+                        response = await self.handler(payload)
+            except json.JSONDecodeError as exc:
+                response = {"ok": False, "error": f"invalid JSON request: {exc.msg}"}
+            except Exception as exc:  # pragma: no cover - defensive daemon boundary
+                response = {"ok": False, "error": str(exc)}
 
-        writer.write(json.dumps(response, ensure_ascii=False).encode("utf-8") + b"\n")
-        await writer.drain()
-        writer.close()
-        await writer.wait_closed()
+            writer.write(json.dumps(response, ensure_ascii=False).encode("utf-8") + b"\n")
+            await writer.drain()
+        except ConnectionError:
+            pass  # A disconnected CLI must not produce an unhandled server task.
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except ConnectionError:
+                pass
 
 
 class DaemonMessageRouter:

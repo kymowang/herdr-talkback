@@ -1,4 +1,6 @@
 import asyncio
+
+from herdr_talkback.transport import start_local_server
 import json
 import sqlite3
 from pathlib import Path
@@ -96,6 +98,7 @@ async def _service_subscribes_to_agent_status_events_once():
         {"type": "pane.closed"},
         {"type": "pane.moved"},
         {"type": "pane.agent_detected"},
+        {"type": "pane.updated"},
         {"type": "pane.agent_status_changed", "pane_id": "p-runner"},
     ]
     assert monitor.events == [
@@ -125,11 +128,12 @@ async def _service_refreshes_registry_on_lifecycle_event():
     assert monitor.events == []
 
 
-def test_service_registers_added_pane_and_wakes_its_waiting_lane():
-    asyncio.run(_service_registers_added_pane_and_wakes_its_waiting_lane())
+@pytest.mark.parametrize('event_name', ['pane.created', 'pane.updated'])
+def test_service_registers_added_pane_and_wakes_its_waiting_lane(event_name):
+    asyncio.run(_service_registers_added_pane_and_wakes_its_waiting_lane(event_name))
 
 
-async def _service_registers_added_pane_and_wakes_its_waiting_lane():
+async def _service_registers_added_pane_and_wakes_its_waiting_lane(event_name):
     endpoint_registry = EndpointRegistry()
     endpoint_registry.register("linux-main", [_endpoint("lead")])
     adapter = SnapshotAdapter(
@@ -140,7 +144,7 @@ async def _service_registers_added_pane_and_wakes_its_waiting_lane():
     )
     dispatcher = WakeRecordingDispatcher()
     service = TalkbackService(
-        LifecycleClient("pane.created"),
+        LifecycleClient(event_name),
         FakeRegistry(),
         FakeMonitor(),
         endpoint_registry=endpoint_registry,
@@ -390,6 +394,7 @@ async def _run_service_dry_run_does_not_create_state_path(monkeypatch, tmp_path)
         {"type": "pane.closed"},
         {"type": "pane.moved"},
         {"type": "pane.agent_detected"},
+        {"type": "pane.updated"},
     ]
 
 
@@ -591,7 +596,7 @@ async def _run_service_dry_run_is_read_only_with_queued_message_and_recoverable_
     monkeypatch.setattr(service_module, "RemoteNodeRegistry", forbidden, raising=False)
     monkeypatch.setattr(service_module, "RemoteNodeAdapter", forbidden, raising=False)
 
-    server = await asyncio.start_unix_server(handle, path=socket_path)
+    server = await start_local_server(handle, socket_path)
     async with server:
         assert await service_module.run_service(cfg, dry_run=True) == 0
 

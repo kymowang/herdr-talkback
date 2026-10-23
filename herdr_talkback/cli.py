@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import time
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -35,6 +36,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("panes")
+    pane = sub.add_parser("pane", help="Inspect and name Herdr panes")
+    pane_sub = pane.add_subparsers(dest="pane_command", required=True)
+    pane_sub.add_parser("list", help="List all panes as a table")
+    name_from_tab = pane_sub.add_parser("name-from-tab", help="Set a pane's name to its Tab name")
+    target = name_from_tab.add_mutually_exclusive_group(required=True)
+    target.add_argument("pane_id", nargs="?")
+    target.add_argument("--all", action="store_true", help="Process every pane in this Herdr session")
+    name_from_tab.add_argument("--force", action="store_true", help="Overwrite existing pane names")
     status = sub.add_parser("status")
     status.add_argument("target")
     status.add_argument("--json", action="store_true")
@@ -162,6 +171,26 @@ async def _main_async(args) -> int:
         return await run_service(cfg, dry_run=args.dry_run)
 
     client = HerdrClient(cfg.socket_path)
+    if args.command == "pane":
+        result = await client.request("pane.list", {})
+        panes = result.get("panes", [])
+        if args.pane_command == "name-from-tab":
+            return await _name_panes_from_tabs(client, panes, args.pane_id, args.force)
+        workspace_ids = sorted({pane['workspace_id'] for pane in panes if pane.get('workspace_id')})
+        tab_results = await asyncio.gather(*(
+            client.request('tab.list', {'workspace_id': workspace_id})
+            for workspace_id in workspace_ids
+        ))
+        tab_labels = {
+            tab['tab_id']: tab.get('label')
+            for result in tab_results for tab in result.get('tabs', [])
+        }
+        print(_format_pane_table([
+            dict(pane, tab_label=tab_labels.get(pane.get('tab_id')))
+            for pane in panes
+        ]))
+        return 0
+
     registry = RoleRegistry(client, cfg.roles, cfg.aliases)
     local_node_id = getattr(cfg, "core_node_id", "linux-main")
 
@@ -364,6 +393,81 @@ def _format_alert(alert: dict) -> str:
         f"[{created_at}] #{alert['id']} {alert['kind']} {alert['title']} "
         f"- {alert['body']}{payload_text}"
     )
+
+
+async def _name_panes_from_tabs(client, panes, pane_id: Optional[str], force: bool) -> int:
+    selected = [pane for pane in panes if pane_id is None or pane['pane_id'] == pane_id]
+    if pane_id is not None and not selected:
+        print(f"pane not found: {pane_id}")
+        return 1
+
+    candidates = []
+    for pane in selected:
+        if not force and (pane.get('label') or '').strip():
+            print(f"{pane['pane_id']}: skipped (name already set)")
+        else:
+            candidates.append(pane)
+
+    workspace_ids = sorted({pane['workspace_id'] for pane in candidates})
+    results = await asyncio.gather(*(
+        client.request('tab.list', {'workspace_id': workspace_id})
+        for workspace_id in workspace_ids
+    ))
+    names = {tab['tab_id']: tab.get('label') for result in results for tab in result.get('tabs', [])}
+    failed = False
+    for pane in candidates:
+        name = names.get(pane['tab_id'])
+        if not name or not name.strip():
+            print(f"{pane['pane_id']}: Tab has no name: {pane['tab_id']}; pane name unchanged")
+            failed = True
+            continue
+        await client.request('pane.rename', {'pane_id': pane['pane_id'], 'label': name})
+        print(f"{pane['pane_id']}: NAME = {name}")
+    return 1 if failed else 0
+
+
+def _display_width(text: str) -> int:
+    return sum(
+        0 if unicodedata.combining(char) else
+        2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+        for char in text
+    )
+
+
+def _format_pane_table(panes) -> str:
+    if not panes:
+        return "No panes found."
+
+    columns = (
+        ("PANE", "pane_id"), ("NAME", "label"), ("TITLE", "terminal_title_stripped"),
+        ("AGENT", "agent"), ("STATUS", "agent_status"), ("TAB", "tab_id"),
+        ("TAB NAME", "tab_label"), ("CWD", "cwd"),
+    )
+
+    def cell(value):
+        # Keep each pane on one line and prevent terminal control characters
+        # in labels or paths from disturbing the table.
+        text = str(value) if value else "-"
+        text = ''.join(' ' if unicodedata.category(c).startswith('C') else c for c in text)
+        return ' '.join(text.split()) or "-"
+
+    rows = [[title for title, _ in columns]]
+    for pane in panes:
+        values = dict(pane)
+        values['terminal_title_stripped'] = pane.get('terminal_title_stripped') or pane.get('terminal_title')
+        rows.append([cell(values.get(key)) for _, key in columns])
+    widths = [max(_display_width(row[i]) for row in rows) for i in range(len(columns))]
+
+    def render(row):
+        return '  '.join(
+            value + ' ' * (width - _display_width(value))
+            for value, width in zip(row, widths)
+        ).rstrip()
+
+    return '\n'.join([
+        render(rows[0]), render(['-' * width for width in widths]),
+        *(render(row) for row in rows[1:]),
+    ])
 
 
 def _pane_status_diagnostic(registry: RoleRegistry, target: str) -> Optional[dict]:

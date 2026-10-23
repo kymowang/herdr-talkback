@@ -1,4 +1,6 @@
 import asyncio
+
+from herdr_talkback.transport import start_local_server
 import json
 
 import pytest
@@ -23,7 +25,7 @@ async def _request_round_trip(tmp_path):
         writer.close()
         await writer.wait_closed()
 
-    server = await asyncio.start_unix_server(handle, path=socket_path)
+    server = await start_local_server(handle, socket_path)
     async with server:
         client = HerdrClient(socket_path)
         result = await client.request("ping", {})
@@ -52,7 +54,7 @@ async def _request_error_raises(tmp_path):
         writer.close()
         await writer.wait_closed()
 
-    server = await asyncio.start_unix_server(handle, path=socket_path)
+    server = await start_local_server(handle, socket_path)
     async with server:
         client = HerdrClient(socket_path)
         with pytest.raises(HerdrError) as exc:
@@ -81,7 +83,7 @@ async def _request_truncates_large_pane_read_to_tail(tmp_path):
         writer.close()
         await writer.wait_closed()
 
-    server = await asyncio.start_unix_server(handle, path=socket_path)
+    server = await start_local_server(handle, socket_path)
     async with server:
         result = await HerdrClient(socket_path).request("pane.read", {"pane_id": "p1"})
 
@@ -108,7 +110,7 @@ async def _subscribe_yields_events_after_ack(tmp_path):
         writer.close()
         await writer.wait_closed()
 
-    server = await asyncio.start_unix_server(handle, path=socket_path)
+    server = await start_local_server(handle, socket_path)
     async with server:
         client = HerdrClient(socket_path)
         events = []
@@ -140,7 +142,7 @@ async def _check_subscription_returns_after_ack_without_waiting_for_event(tmp_pa
         writer.close()
         await writer.wait_closed()
 
-    server = await asyncio.start_unix_server(handle, path=socket_path)
+    server = await start_local_server(handle, socket_path)
     async with server:
         client = HerdrClient(socket_path, timeout=0.1)
         await asyncio.wait_for(
@@ -162,7 +164,7 @@ async def _check_subscription_times_out_when_ack_stalls(tmp_path):
         writer.close()
         await writer.wait_closed()
 
-    server = await asyncio.start_unix_server(handle, path=socket_path)
+    server = await start_local_server(handle, socket_path)
     async with server:
         client = HerdrClient(socket_path, timeout=0.01)
         with pytest.raises(asyncio.TimeoutError):
@@ -181,7 +183,7 @@ async def _check_subscription_rejects_missing_ack(tmp_path):
         writer.close()
         await writer.wait_closed()
 
-    server = await asyncio.start_unix_server(handle, path=socket_path)
+    server = await start_local_server(handle, socket_path)
     async with server:
         client = HerdrClient(socket_path)
         with pytest.raises(HerdrError, match="closed before subscription ack"):
@@ -211,7 +213,7 @@ async def _check_subscription_propagates_ack_error(tmp_path):
         writer.close()
         await writer.wait_closed()
 
-    server = await asyncio.start_unix_server(handle, path=socket_path)
+    server = await start_local_server(handle, socket_path)
     async with server:
         client = HerdrClient(socket_path)
         with pytest.raises(HerdrError, match="subscription_denied: not available"):

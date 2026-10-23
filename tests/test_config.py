@@ -9,6 +9,7 @@ def test_default_config_uses_herdr_socket_env(monkeypatch, tmp_path):
     socket_path = tmp_path / "herdr.sock"
     monkeypatch.setenv("HERDR_SOCKET_PATH", str(socket_path))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     cfg = load_config(None)
 
@@ -92,6 +93,7 @@ pane_role = "runner"
 def test_default_config_file_is_loaded(monkeypatch, tmp_path):
     monkeypatch.setenv("HERDR_SOCKET_PATH", "/tmp/default.sock")
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     config_dir = tmp_path / ".config" / "herdr-talkback"
     config_dir.mkdir(parents=True)
     (config_dir / "config.toml").write_text(
@@ -115,6 +117,7 @@ retry_interval_seconds = 3
 def test_default_core_node_id(monkeypatch, tmp_path):
     monkeypatch.setenv("HERDR_SOCKET_PATH", str(tmp_path / "herdr.sock"))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     assert load_config(None).core_node_id == "linux-main"
 
@@ -145,7 +148,7 @@ def test_rejects_malformed_core_node_id_before_state_construction(
 def test_message_rules_config(tmp_path, monkeypatch):
     monkeypatch.setenv('HERDR_SOCKET_PATH', '/tmp/herdr.sock')
     path = tmp_path / 'config.toml'
-    path.write_text('[[message_rules]]\nid="receipt"\nagents=["lead", "lead2", "scheduler"]\nappend="回执"\n')
+    path.write_text('[[message_rules]]\nid="receipt"\nagents=["lead", "lead2", "scheduler"]\nappend="回执"\n', encoding='utf-8')
     assert load_config(path).message_rules[0].agents == ('lead', 'lead2', 'scheduler')
     path.write_text('message_rules=[]\n')
     assert load_config(path).message_rules == ()

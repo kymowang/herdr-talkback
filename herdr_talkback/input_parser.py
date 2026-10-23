@@ -41,6 +41,14 @@ def inspect_input(
 
     input_line = _first_line(segment)
     visible = _strip_ansi(input_line).strip()
+    if (
+        expected_message and _last_codex_prompt_is_dim(ansi_text)
+        and (visible == expected_message or _is_expected_soft_wrapped_residue(segment, expected_message))
+    ):
+        # Codex dims submitted transcript prompts while its active composer may
+        # be hidden during generation. This is evidence of submission, not residue.
+        kind = "submitted" if allow_transformed_residue else "unknown"
+        return InputState(kind=kind, text_after_prompt=visible, contains_expected_message=True)
     if expected_message and visible == expected_message:
         return InputState(
             kind="residue",
@@ -76,6 +84,29 @@ def inspect_input(
     if _looks_like_placeholder(input_line, visible):
         return InputState(kind="empty", text_after_prompt=visible)
     return InputState(kind="occupied", text_after_prompt=visible)
+
+
+def _last_codex_prompt_is_dim(text: str) -> bool:
+    marker = text.rfind("›")
+    if marker < 0 or text.rfind("❯") > marker:
+        return False
+    prefix = text[text.rfind('\n', 0, marker) + 1:marker]
+    dim = False
+    for match in SGR_RE.finditer(prefix):
+        parts = [int(part or '0') for part in match.group(1).split(';')]
+        index = 0
+        while index < len(parts):
+            code = parts[index]
+            if code in (38, 48) and index + 1 < len(parts):
+                # Color mode 2 and RGB channels are not SGR dim attributes.
+                index += 5 if parts[index + 1] == 2 else 3
+                continue
+            if code in (0, 22):
+                dim = False
+            elif code == 2:
+                dim = True
+            index += 1
+    return dim
 
 
 def _segment_after_last_prompt(text: str) -> Optional[str]:

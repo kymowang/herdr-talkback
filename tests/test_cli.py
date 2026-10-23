@@ -106,7 +106,7 @@ async def _state_read_command_uses_configured_node_for_first_migration(monkeypat
         )
     config_file = tmp_path / "config.toml"
     config_file.write_text(
-        'state_path = "{0}"\n\n[core]\nnode_id = "workstation"\n'.format(state_path),
+        'state_path = "{0}"\n\n[core]\nnode_id = "workstation"\n'.format(state_path.as_posix()),
         encoding="utf-8",
     )
 
@@ -152,7 +152,7 @@ async def _state_read_command_rejects_invalid_node_before_migration(tmp_path, co
         )
     config_file = tmp_path / "config.toml"
     config_file.write_text(
-        'state_path = "{0}"\n\n[core]\nnode_id = "remote/node"\n'.format(state_path),
+        'state_path = "{0}"\n\n[core]\nnode_id = "remote/node"\n'.format(state_path.as_posix()),
         encoding="utf-8",
     )
 
@@ -176,7 +176,7 @@ async def _tail_reads_state_without_herdr_socket(monkeypatch, tmp_path, capsys):
     state.init()
     state.record_event("delivery", {"message_id": "msg_1"})
     config_file = tmp_path / "herdr-talkback.toml"
-    config_file.write_text(f'state_path = "{state_path}"\n', encoding="utf-8")
+    config_file.write_text(f'state_path = "{state_path.as_posix()}"\n', encoding="utf-8")
 
     def fail_herdr_client(socket_path):
         raise AssertionError("tail must not construct HerdrClient")
@@ -228,7 +228,7 @@ async def _queue_reads_active_messages_without_herdr_socket(monkeypatch, tmp_pat
             )
         )
     config_file = tmp_path / "herdr-talkback.toml"
-    config_file.write_text(f'state_path = "{state_path}"\n', encoding="utf-8")
+    config_file.write_text(f'state_path = "{state_path.as_posix()}"\n', encoding="utf-8")
 
     def fail_herdr_client(socket_path):
         raise AssertionError("queue must not construct HerdrClient")
@@ -263,7 +263,7 @@ async def _alerts_reads_open_alerts_without_herdr_socket(monkeypatch, tmp_path, 
     cleared_id = state.record_alert("status_unknown", "Herdr Talkback status unknown", "runner unknown", {})
     state.clear_alerts([cleared_id])
     config_file = tmp_path / "herdr-talkback.toml"
-    config_file.write_text(f'state_path = "{state_path}"\n', encoding="utf-8")
+    config_file.write_text(f'state_path = "{state_path.as_posix()}"\n', encoding="utf-8")
 
     def fail_herdr_client(socket_path):
         raise AssertionError("alerts must not construct HerdrClient")
@@ -292,7 +292,7 @@ async def _alerts_clear_marks_open_alerts_without_herdr_socket(monkeypatch, tmp_
     state.init()
     state.record_alert("delivery_failed", "Herdr Talkback delivery blocked", "lead -> runner failed", {})
     config_file = tmp_path / "herdr-talkback.toml"
-    config_file.write_text(f'state_path = "{state_path}"\n', encoding="utf-8")
+    config_file.write_text(f'state_path = "{state_path.as_posix()}"\n', encoding="utf-8")
 
     args = build_parser().parse_args(["--config", str(config_file), "alerts", "clear"])
     result = await cli._main_async(args)
@@ -314,7 +314,7 @@ async def _alerts_lists_latest_twenty_by_default(monkeypatch, tmp_path, capsys):
     for index in range(25):
         state.record_alert("test", f"title {index}", f"body {index}", {})
     config_file = tmp_path / "herdr-talkback.toml"
-    config_file.write_text(f'state_path = "{state_path}"\n', encoding="utf-8")
+    config_file.write_text(f'state_path = "{state_path.as_posix()}"\n', encoding="utf-8")
 
     args = build_parser().parse_args(["--config", str(config_file), "alerts"])
     result = await cli._main_async(args)
@@ -379,7 +379,7 @@ async def _send_dry_run_submits_to_daemon_without_herdr_socket(monkeypatch, tmp_
     monkeypatch.delenv("HERDR_SOCKET_PATH", raising=False)
     daemon_socket = tmp_path / "herdr-talkback.sock"
     config_file = tmp_path / "herdr-talkback.toml"
-    config_file.write_text(f'daemon_socket_path = "{daemon_socket}"\n', encoding="utf-8")
+    config_file.write_text(f'daemon_socket_path = "{daemon_socket.as_posix()}"\n', encoding="utf-8")
     requests = []
 
     async def fake_submit(socket_path, payload):
@@ -426,7 +426,7 @@ async def _retry_submits_stored_message_to_daemon_and_marks_old_message(monkeypa
     state.update_message_state("msg_1", MessageState.RETRYING, "target input occupied")
     config_file = tmp_path / "herdr-talkback.toml"
     config_file.write_text(
-        f'state_path = "{state_path}"\ndaemon_socket_path = "{daemon_socket}"\n',
+        f'state_path = "{state_path.as_posix()}"\ndaemon_socket_path = "{daemon_socket.as_posix()}"\n',
         encoding="utf-8",
     )
     requests = []
@@ -881,7 +881,7 @@ def test_send_reports_when_daemon_is_unavailable(monkeypatch, tmp_path, capsys):
 async def _send_reports_when_daemon_is_unavailable(monkeypatch, tmp_path, capsys):
     daemon_socket = tmp_path / "herdr-talkback.sock"
     config_file = tmp_path / "herdr-talkback.toml"
-    config_file.write_text(f'daemon_socket_path = "{daemon_socket}"\n', encoding="utf-8")
+    config_file.write_text(f'daemon_socket_path = "{daemon_socket.as_posix()}"\n', encoding="utf-8")
 
     async def fail_submit(socket_path, payload):
         raise FileNotFoundError(str(socket_path))
@@ -895,7 +895,7 @@ async def _send_reports_when_daemon_is_unavailable(monkeypatch, tmp_path, capsys
     output = capsys.readouterr().out
     assert '"ok": false' in output
     assert "herdr-talkback daemon is not reachable" in output
-    assert str(daemon_socket) in output
+    assert str(daemon_socket) in json.loads(output)['error']
 
 
 def test_serve_dry_run_uses_existing_one_shot_service_interface(monkeypatch, tmp_path):

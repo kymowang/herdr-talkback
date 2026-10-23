@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+
+from .transport import open_local_connection
 from pathlib import Path
 from typing import Any, AsyncIterator, Mapping, Sequence
 
@@ -26,7 +28,7 @@ class HerdrClient:
     async def request(self, method: str, params: Mapping[str, Any]) -> Mapping[str, Any]:
         request_id = self._next_id()
         reader, writer = await asyncio.wait_for(
-            asyncio.open_unix_connection(str(self.socket_path), limit=SOCKET_RESPONSE_LIMIT_BYTES),
+            open_local_connection(self.socket_path, limit=SOCKET_RESPONSE_LIMIT_BYTES),
             timeout=self.timeout,
         )
         try:
@@ -67,7 +69,7 @@ class HerdrClient:
     async def _open_subscription(self, subscriptions: Sequence[Mapping[str, Any]]):
         request_id = self._next_id()
         reader, writer = await asyncio.wait_for(
-            asyncio.open_unix_connection(str(self.socket_path), limit=SOCKET_RESPONSE_LIMIT_BYTES),
+            open_local_connection(self.socket_path, limit=SOCKET_RESPONSE_LIMIT_BYTES),
             timeout=self.timeout,
         )
         try:

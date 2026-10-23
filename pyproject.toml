@@ -19,6 +19,7 @@ test = [
 
 [project.scripts]
 herdr-talkback = "herdr_talkback.cli:main"
+herdr-talkback-plugin = "herdr_talkback.plugin:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

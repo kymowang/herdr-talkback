@@ -167,12 +167,16 @@ class DeliveryService:
     async def _verify(self, pane_id: str, expected_message: str) -> str:
         after = await self._read_input(pane_id)
         state = inspect_input(after, expected_message, allow_transformed_residue=True)
-        if state.kind == "residue":
+        if state.kind == "submitted":
+            return "delivered"
+        timeout_seconds = self.verify_timeout_ms / 1000
+        # Windows Codex may render the pasted text before processing its queued
+        # Enter. Allow the configured window before treating it as stuck input.
+        if state.kind == "residue" and (timeout_seconds <= 0 or after.rfind("›") <= after.rfind("❯")):
             return "residue"
-        if state.kind != "empty":
+        if state.kind not in {"empty", "residue"}:
             return "ambiguous"
 
-        timeout_seconds = self.verify_timeout_ms / 1000
         if timeout_seconds <= 0:
             return "delivered"
 
@@ -185,13 +189,17 @@ class DeliveryService:
 
             after = await self._read_input(pane_id)
             state = inspect_input(after, expected_message, allow_transformed_residue=True)
+            if state.kind == "submitted":
+                return "delivered"
             if state.kind == "empty":
                 continue
             if state.kind == "residue":
+                if after.rfind("›") > after.rfind("❯"):
+                    continue
                 return "residue"
             return "ambiguous"
 
-        return "delivered"
+        return "residue" if state.kind == "residue" else "delivered"
 
     async def _flush_message_residue(
         self, message_id: str, pane_id: str, expected_message: str, attempt: int

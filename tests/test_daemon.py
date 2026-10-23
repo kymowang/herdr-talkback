@@ -14,6 +14,29 @@ def test_daemon_socket_round_trip(tmp_path):
     asyncio.run(_daemon_socket_round_trip(tmp_path))
 
 
+def test_daemon_startup_probe_closes_without_response():
+    class Reader:
+        async def readline(self):
+            return b''
+
+    class Writer:
+        closed = False
+
+        def write(self, data):
+            raise AssertionError('disconnected probes must not receive a response')
+
+        def close(self):
+            self.closed = True
+
+        async def wait_closed(self):
+            pass
+
+    writer = Writer()
+    server = DaemonInboxServer(Path('unused'), None)
+    asyncio.run(server._handle_client(Reader(), writer))
+    assert writer.closed
+
+
 async def _daemon_socket_round_trip(tmp_path):
     socket_path = tmp_path / "herdr-talkback.sock"
 

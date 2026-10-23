@@ -3,31 +3,31 @@ name = "Herdr Talkback"
 version = "0.1.0"
 min_herdr_version = "0.9.1"
 description = "Queued agent messaging and configurable, agent-scoped recovery for Herdr"
-platforms = ["linux", "macos"]
+platforms = ["linux", "macos", "windows"]
 
 [[startup]]
-command = ["python3", "plugin.py", "start"]
+command = ["herdr-talkback-plugin", "start"]
 
 [[actions]]
 id = "start"
 title = "Start Talkback service"
 contexts = ["workspace"]
-command = ["python3", "plugin.py", "start"]
+command = ["herdr-talkback-plugin", "start"]
 
 [[actions]]
 id = "check"
 title = "Check Talkback configuration and Herdr connection"
 contexts = ["workspace"]
-command = ["python3", "plugin.py", "check"]
+command = ["herdr-talkback-plugin", "check"]
 
 [[actions]]
 id = "queue"
 title = "Show Talkback message queue"
 contexts = ["workspace"]
-command = ["python3", "plugin.py", "queue"]
+command = ["herdr-talkback-plugin", "queue"]
 
 [[panes]]
 id = "service"
 title = "Talkback service"
 placement = "tab"
-command = ["python3", "plugin.py", "serve"]
+command = ["herdr-talkback-plugin", "serve"]

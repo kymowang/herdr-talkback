@@ -14,7 +14,7 @@ from .roles import RoleRegistry
 from .state import TalkbackState
 
 
-LIFECYCLE_EVENTS = {"pane.created", "pane.closed", "pane.moved", "pane.agent_detected"}
+LIFECYCLE_EVENTS = {"pane.created", "pane.closed", "pane.moved", "pane.agent_detected", "pane.updated"}
 
 
 class TalkbackService:
@@ -182,6 +182,7 @@ def _subscriptions(registry):
         {"type": "pane.closed"},
         {"type": "pane.moved"},
         {"type": "pane.agent_detected"},
+        {"type": "pane.updated"},
     ]
     subscriptions.extend(
         {"type": "pane.agent_status_changed", "pane_id": info.pane_id}

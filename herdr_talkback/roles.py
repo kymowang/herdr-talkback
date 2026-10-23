@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Mapping, Optional, Sequence
 
+from .addressing import SEGMENT_RE
 from .types import AgentInfo
 
 
@@ -36,7 +37,9 @@ class RoleRegistry:
                 tab_id=raw_pane["tab_id"],
                 cwd=raw_pane.get("cwd"),
             )
-            if name:
+            # Pane titles (including our own service pane) are not necessarily
+            # valid message addresses. Keep them queryable by pane ID only.
+            if isinstance(name, str) and SEGMENT_RE.fullmatch(name):
                 by_role[name] = agent_info
                 by_pane[agent_info.pane_id] = name
             by_pane_info[agent_info.pane_id] = agent_info

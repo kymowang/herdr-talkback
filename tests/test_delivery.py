@@ -13,6 +13,53 @@ ROLES = ("lead", "dev-back", "system-bus")
 ALIASES = {"system-bus": "lead"}
 EMPTY_PROMPT = "❯ \x1b[38;2;136;136;136mType a message\x1b[0m"
 MESSAGE_TEXT = "[lead→dev-back] ping"
+
+
+def test_delivery_recognizes_codex_submitted_history(tmp_path):
+    async def scenario():
+        submitted = '\x1b[0m\x1b[1m\x1b[2m\x1b[48;2;50;50;50m› ' + MESSAGE_TEXT
+        client = FakeClient([EMPTY_PROMPT, submitted, submitted])
+        state = TalkbackState(tmp_path / 'state.db')
+        state.init()
+        delivery = DeliveryService(client, FakeRegistry(), state)
+        result = await delivery.deliver(parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert result.delivered
+        sends = [params for method, params in client.requests if method == 'pane.send_input']
+        assert sends == [{'pane_id': 'p-back', 'text': MESSAGE_TEXT, 'keys': ['enter']}]
+
+    asyncio.run(scenario())
+
+
+def test_old_codex_submission_does_not_confirm_a_new_delivery(tmp_path):
+    async def scenario():
+        submitted = '\x1b[0m\x1b[1m\x1b[2m› ' + MESSAGE_TEXT
+        client = FakeClient([submitted, submitted])
+        state = TalkbackState(tmp_path / 'state.db')
+        state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1).deliver(
+            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert not result.delivered
+        assert not [params for method, params in client.requests if method == 'pane.send_input']
+
+    asyncio.run(scenario())
+
+
+def test_delivery_waits_for_codex_to_render_submission(tmp_path):
+    async def scenario():
+        residue = '› ' + MESSAGE_TEXT
+        submitted = '\x1b[0m\x1b[1m\x1b[2m› ' + MESSAGE_TEXT
+        client = FakeClient([EMPTY_PROMPT, residue, submitted, submitted])
+        state = TalkbackState(tmp_path / 'state.db')
+        state.init()
+        sleeper = FakeSleeper()
+        result = await DeliveryService(client, FakeRegistry(), state, verify_timeout_ms=500,
+                                       sleep=sleeper.sleep).deliver(parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert result.delivered
+        sends = [params for method, params in client.requests if method == 'pane.send_input']
+        assert len(sends) == 1
+        assert sends[0]['text'] == MESSAGE_TEXT
+
+    asyncio.run(scenario())
 OCCUPIED_PROMPT = "❯ \x1b[38;2;255;255;255mhalf typed\x1b[0m"
 
 

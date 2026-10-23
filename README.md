@@ -4,7 +4,11 @@ Herdr 原生插件：在有角色名称的 agent pane 之间可靠转发消息�
 
 ## 安装和运行
 
-需要 Linux/macOS、Python 3.9+、Herdr 0.9.1+。Python 3.9/3.10 还需要 `tomli`，通过安装本项目自动安装。
+支持 Windows、Linux 和 macOS，需要 Python 3.9+、Herdr 0.9.1+。Python 3.9/3.10 还需要 `tomli`，通过安装本项目自动安装。
+
+先安装 Python 包，再注册插件。安装会生成 `herdr-talkback` 和 `herdr-talkback-plugin` 入口，绑定安装时的 Python 解释器，不依赖系统中的 `python`/`python3` 别名。两个入口所在目录必须在 Herdr 的 `PATH` 中；使用虚拟环境时，应先激活环境再启动 Herdr。
+
+Linux/macOS：
 
 ```bash
 cd /path/to/herdr-talkback
@@ -15,9 +19,22 @@ herdr plugin log list --plugin herdr-talkback
 herdr plugin action invoke herdr-talkback.start
 ```
 
+Windows PowerShell：
+
+```powershell
+cd D:\repo\herdr-talkback
+python -m pip install -e .
+herdr plugin link "$PWD"
+herdr plugin action invoke herdr-talkback.check
+herdr plugin log list --plugin herdr-talkback
+herdr plugin action invoke herdr-talkback.start
+```
+
+Windows 通过命名管道连接 Herdr 和 Talkback 服务，Linux/macOS 使用 Unix socket。配置中的 `socket_path` 和 `daemon_socket_path` 保持路径形式；Windows 下的同名文件只是管道标记，不是 TCP 端口文件。自定义 TOML 路径建议使用正斜杠或单引号，例如 `state_path = 'D:\talkback\state.db'`。
+
 `link` 不会自动启动服务。`start` 在 Herdr 的独立 tab 中运行服务，关闭该 pane 即停止。下一次 Herdr server 启动时，startup hook 会重新打开服务 pane；hook 自身执行后退出，不运行脱离 Herdr 管理的后台进程。[Herdr 插件文档](https://herdr.dev/docs/plugins/)
 
-同一会话的重复启动会被 socket 检查和进程锁阻止。检测到旧 Agent Hub 仍在运行时，插件拒绝启动，避免两个 Monitor 重复写入。切换时先停止旧服务：
+同一会话的重复启动会被连接检查和进程锁阻止。检测到旧 Agent Hub 仍在运行时，插件拒绝启动，避免两个 Monitor 重复写入。Linux 上使用 systemd 管理旧服务时，切换前先停止：
 
 ```bash
 systemctl --user stop agent-hub.service
@@ -89,6 +106,7 @@ append = "上述内容如果是任务而非通知，完成后请发回执给我"
 ```bash
 TALKBACK_CONFIG="$(herdr plugin config-dir herdr-talkback)/config.toml"
 herdr-talkback --config "$TALKBACK_CONFIG" panes
+herdr-talkback --config "$TALKBACK_CONFIG" pane list
 herdr-talkback --config "$TALKBACK_CONFIG" send '[lead->dev-be] 请处理任务' --dry-run
 herdr-talkback --config "$TALKBACK_CONFIG" send '[lead->dev-be] 请处理任务'
 herdr-talkback --config "$TALKBACK_CONFIG" queue
@@ -100,6 +118,20 @@ herdr-talkback --config "$TALKBACK_CONFIG" alerts --json
 herdr-talkback --config "$TALKBACK_CONFIG" alerts clear
 herdr-talkback --config "$TALKBACK_CONFIG" tail
 ```
+
+`pane list` 以表格显示全部窗格，包含未命名窗格与插件服务窗格。`NAME` 为窗格名称，`TITLE` 为终端标题，`TAB NAME` 为 Tab 名称（例如 `jupyter`）；另外显示窗格 ID、Agent、状态、Tab ID 和目录。中文名称按显示宽度对齐。`panes` 仍用于查看可路由的角色。
+
+将指定窗格的名称设置为所属 Tab 的当前名称：
+
+```bash
+herdr-talkback pane name-from-tab w2:p5
+# 批量填写当前会话中所有名称为空的窗格
+herdr-talkback pane name-from-tab --all
+# 强制覆盖所有窗格的已有名称
+herdr-talkback pane name-from-tab --all --force
+```
+
+例如 Tab 名为 `jupyter`，执行后该窗格的 `NAME` 也变为 `jupyter`。默认跳过已有名称的窗格，`--force` 可强制覆盖，也可用于单个窗格。`--all` 处理当前 Herdr 会话的全部窗格（包括其他 workspace）；同一 Tab 中的多个窗格会得到相同名称。此命令只执行一次复制，不会随 Tab 改名自动同步；Tab 无名称时保持原名称并返回非零退出码。Talkback 消息角色只接受字母、数字、点、下划线和连字符，包含空格或中文的名称仅用于展示。
 
 未安装 Python 包时可在仓库目录使用 `python3 -m herdr_talkback` 代替 `herdr-talkback`。消息头支持 `→`/`->` 和本机限定地址。跨主机目标被拒绝。
 

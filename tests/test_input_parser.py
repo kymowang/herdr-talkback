@@ -1,6 +1,15 @@
 from herdr_talkback.input_parser import InputState, inspect_input
 
 
+def test_codex_submission_requires_dim_prompt_and_post_send_verification():
+    message = '[lead->dev-back] ping'
+    submitted = '\x1b[0m\x1b[1m\x1b[2m› ' + message
+    assert inspect_input(submitted, message, allow_transformed_residue=True).kind == 'submitted'
+    assert inspect_input(submitted, message).kind == 'unknown'
+    for prefix in ('\x1b[48;2;50;50;50m', '\x1b[2m\x1b[22m', '\x1b[2m\x1b[0m'):
+        assert inspect_input(prefix + '› ' + message, message, allow_transformed_residue=True).kind == 'residue'
+
+
 def test_gray_placeholder_is_empty():
     text = "\x1b[38;2;255;255;255m●\x1b[0m ❯ \x1b[38;2;136;136;136mType a message\x1b[0m"
 
