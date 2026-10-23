@@ -13,6 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+network = ["aiohttp>=3.9,<4", "cryptography>=42"]
 test = [
   "pytest>=8.0",
 ]
