@@ -71,6 +71,42 @@ class WakeRecordingDispatcher:
         self.wake_calls.append(endpoint)
 
 
+def test_service_discovers_named_pane_without_lifecycle_event():
+    async def scenario():
+        class SilentClient:
+            async def subscribe(self, subscriptions):
+                await asyncio.Event().wait()
+                yield {}
+
+        class ChangingAdapter:
+            calls = 0
+
+            async def refresh(self):
+                self.calls += 1
+                return [_endpoint("lead")] + ([_endpoint("runner")] if self.calls > 1 else [])
+
+        dispatcher = WakeRecordingDispatcher()
+        service = TalkbackService(
+            SilentClient(), FakeRegistry(), FakeMonitor(),
+            endpoint_registry=EndpointRegistry(), adapter=ChangingAdapter(),
+            dispatcher=dispatcher, local_node_id="linux-main",
+            registry_refresh_seconds=0.01,
+        )
+        task = asyncio.create_task(service.run_forever())
+        try:
+            async def wait_registered():
+                while "linux-main/runner" not in dispatcher.wake_calls:
+                    await asyncio.sleep(0.001)
+            await asyncio.wait_for(wait_registered(), 1)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert dispatcher.wake_calls.count("linux-main/runner") == 1
+
+    asyncio.run(scenario())
+
+
 def _endpoint(name, status="online"):
     return EndpointDescriptor(
         address=EndpointAddress("linux-main", name),
@@ -245,7 +281,7 @@ async def _service_sleeps_after_clean_disconnect_before_retry(monkeypatch):
     service = TalkbackService(client, registry, monitor, reconnect_delay_seconds=0.25)
 
     try:
-        await service.run_forever()
+        await service._run_monitor_forever()
     except asyncio.CancelledError:
         pass
 

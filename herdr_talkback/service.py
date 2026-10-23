@@ -29,6 +29,7 @@ class TalkbackService:
         adapter=None,
         dispatcher=None,
         local_node_id=None,
+        registry_refresh_seconds: float = 5.0,
     ) -> None:
         self.client = client
         self.registry = registry
@@ -39,6 +40,10 @@ class TalkbackService:
         self.adapter = adapter
         self.dispatcher = dispatcher
         self.local_node_id = local_node_id
+        if registry_refresh_seconds <= 0:
+            raise ValueError("registry refresh interval must be positive")
+        self.registry_refresh_seconds = registry_refresh_seconds
+        self._refresh_lock = asyncio.Lock()
 
     async def run_once(self) -> None:
         await self._run_subscription(stop_after_one=True)
@@ -64,6 +69,10 @@ class TalkbackService:
                 break
 
     async def _refresh_registries(self) -> None:
+        async with self._refresh_lock:
+            await self._refresh_registries_locked()
+
+    async def _refresh_registries_locked(self) -> None:
         if self.adapter is None:
             await self.registry.refresh()
             return
@@ -90,11 +99,22 @@ class TalkbackService:
                 self.dispatcher.wake(endpoint)
 
     async def run_forever(self) -> None:
+        tasks = [self._run_monitor_forever(), self._refresh_periodically()]
         if self.inbox is not None:
-            await asyncio.gather(self._run_monitor_forever(), self.inbox.serve_forever())
-            return
+            tasks.append(self.inbox.serve_forever())
+        await asyncio.gather(*tasks)
 
-        await self._run_monitor_forever()
+    async def _refresh_periodically(self) -> None:
+        # Some Herdr versions do not emit pane.updated when a label changes.
+        # Refresh locally so a waiting delivery can find a newly named pane.
+        while True:
+            await asyncio.sleep(self.registry_refresh_seconds)
+            try:
+                await self._refresh_registries()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass  # Retry after a temporary Herdr disconnect.
 
     async def _run_monitor_forever(self) -> None:
         while True:
