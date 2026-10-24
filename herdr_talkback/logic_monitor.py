@@ -4,7 +4,7 @@ import json
 import re
 import time
 
-from .input_parser import inspect_input
+from .input_parser import inspect_input, strip_opencode_sidebar
 from .logic_state import RESULTS
 
 
@@ -115,7 +115,7 @@ class LogicalPaneMonitor:
     async def _snapshot(self, pane_id):
         result = await self.client.request('pane.read', {
             'pane_id': pane_id, 'source': 'recent_unwrapped', 'lines': 200, 'format': 'text'})
-        return normalize_snapshot(result['read']['text'])
+        return normalize_snapshot(strip_opencode_sidebar(result['read']['text']))
 
     async def _empty(self, pane_id):
         result = await self.client.request('pane.read', {

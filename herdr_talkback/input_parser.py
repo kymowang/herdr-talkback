@@ -133,9 +133,24 @@ def _inspect_opencode(ansi_text, expected):
     visible = '\n'.join(reversed(content)).strip()
     if not visible:
         return InputState(kind='empty', text_after_prompt='')
-    if expected and visible == expected.strip():
+    normalized = ''.join(visible.split())
+    expected_normalized = ''.join(expected.split())
+    if expected and (normalized == expected_normalized or (
+        len(normalized) >= 128 and expected_normalized.endswith(normalized)
+    )):
         return InputState(kind='residue', text_after_prompt=visible, contains_expected_message=True)
     return InputState(kind='occupied', text_after_prompt=visible)
+
+
+def strip_opencode_sidebar(text):
+    """Keep the transcript columns, excluding OpenCode's independently drawn sidebar."""
+    if _inspect_opencode(text, '') is None:
+        return text
+    lines = ANSI_RE.sub('', text).splitlines()
+    borders = [re.match(r'^(\s*)╹(▀{8,})', line) for line in lines]
+    border = [match for match in borders if match][-1]
+    end = len(border.group(1)) + 1 + len(border.group(2))
+    return '\n'.join(_cell_slice(line, 0, end).rstrip() for line in lines)
 
 
 def _last_codex_prompt_is_dim(text: str) -> bool:

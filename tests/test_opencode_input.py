@@ -1,6 +1,6 @@
 import pytest
 
-from herdr_talkback.input_parser import inspect_input
+from herdr_talkback.input_parser import inspect_input, strip_opencode_sidebar
 
 
 def screen(draft='', sidebar='Connect provider /connect'):
@@ -31,3 +31,19 @@ def test_opencode_layout_requires_footer_and_active_bar():
 def test_opencode_multiline_and_interrupted_sidebar():
     text = screen('first').replace('  ┃' + ' ' * 40, '  ┃second'.ljust(43))
     assert inspect_input(text, 'first\nsecond').kind == 'residue'
+
+
+def test_opencode_wrapped_long_paste_tail_is_own_residue():
+    expected = 'request_id: abc\n' + 'abcdefghij' * 40
+    tail = ('abcdefghij' * 20)
+    rows = ['  ┃' + tail[i:i+40] for i in range(0, len(tail), 40)]
+    rows += ['  ┃  Build · DeepSeek OpenCode', '  ╹' + '▀' * 40, '  ctrl+p commands']
+    assert inspect_input('\n'.join(rows), expected).kind == 'residue'
+    assert inspect_input(screen('small fragment'), expected).kind == 'occupied'
+
+
+def test_strip_sidebar_from_monitor_json_without_touching_other_terminals():
+    line = '{"request_id":"r1","status":"continue"}'
+    view = line.ljust(43) + '  use other models\n' + screen()
+    assert strip_opencode_sidebar(view).splitlines()[0].strip() == line
+    assert strip_opencode_sidebar('normal terminal line') == 'normal terminal line'
