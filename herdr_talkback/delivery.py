@@ -145,6 +145,13 @@ class DeliveryService:
             return await self._flush_control_residue(pane_id, text)
 
         await self.client.request("pane.send_input", {"pane_id": pane_id, "text": text, "keys": ["enter"]})
+        if strict:
+            verified = await self._verify(pane_id, text, timeout_ms=max(500, self.verify_timeout_ms))
+            if verified == 'delivered':
+                return DeliveryResult(True, 'control sent', 1)
+            if verified == 'residue':
+                return await self._flush_control_residue(pane_id, text)
+            return DeliveryResult(False, 'control not confirmed', 1)
         after = await self._read_input(pane_id)
         after_state = inspect_input(after, text)
         if after_state.kind == "empty":
@@ -166,12 +173,12 @@ class DeliveryService:
     async def _dismiss_overlay(self, pane_id: str) -> None:
         await self.client.request("pane.send_input", {"pane_id": pane_id, "text": "", "keys": ["esc"]})
 
-    async def _verify(self, pane_id: str, expected_message: str) -> str:
+    async def _verify(self, pane_id: str, expected_message: str, timeout_ms=None) -> str:
         after = await self._read_input(pane_id)
         state = inspect_input(after, expected_message, allow_transformed_residue=True)
         if state.kind == "submitted":
             return "delivered"
-        timeout_seconds = self.verify_timeout_ms / 1000
+        timeout_seconds = (self.verify_timeout_ms if timeout_ms is None else timeout_ms) / 1000
         # Windows Codex may render the pasted text before processing its queued
         # Enter. Allow the configured window before treating it as stuck input.
         if state.kind == "residue" and (timeout_seconds <= 0 or after.rfind("›") <= after.rfind("❯")):

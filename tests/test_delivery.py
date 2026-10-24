@@ -736,6 +736,20 @@ def test_send_control_flushes_own_residue_once(tmp_path):
     asyncio.run(_send_control_flushes_own_residue_once(tmp_path))
 
 
+def test_strict_control_waits_for_delayed_paste_before_confirming(tmp_path):
+    async def scenario():
+        client = FakeClient([EMPTY_PROMPT, EMPTY_PROMPT, '\u203a continue', '\u203a continue', EMPTY_PROMPT])
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        sleeper = FakeSleeper()
+        delivery = DeliveryService(client, FakeRegistry(), state, verify_timeout_ms=500, sleep=sleeper.sleep)
+        result = await delivery.send_control('p-back', 'continue', strict=True)
+        assert result.delivered
+        writes = [params for method, params in client.requests if method == 'pane.send_input']
+        assert writes == [{'pane_id': 'p-back', 'text': 'continue', 'keys': ['enter']},
+                          {'pane_id': 'p-back', 'text': '', 'keys': ['enter']}]
+    asyncio.run(scenario())
+
+
 async def _send_control_flushes_own_residue_once(tmp_path):
     client = FakeClient(
         [
