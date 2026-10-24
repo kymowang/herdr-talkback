@@ -27,6 +27,7 @@ def resolve_selector(panes, selector):
 
 def parse_result(text, baseline, request_id):
     """Only exact fresh response lines, outside quoted/fenced material, count."""
+    text, baseline = strip_opencode_sidebar(text), strip_opencode_sidebar(baseline)
     if text == baseline:
         return None
     if baseline and text.startswith(baseline):
@@ -115,7 +116,7 @@ class LogicalPaneMonitor:
     async def _snapshot(self, pane_id):
         result = await self.client.request('pane.read', {
             'pane_id': pane_id, 'source': 'recent_unwrapped', 'lines': 200, 'format': 'text'})
-        return normalize_snapshot(strip_opencode_sidebar(result['read']['text']))
+        return normalize_snapshot(result['read']['text'])
 
     async def _empty(self, pane_id):
         result = await self.client.request('pane.read', {

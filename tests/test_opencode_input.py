@@ -47,3 +47,11 @@ def test_strip_sidebar_from_monitor_json_without_touching_other_terminals():
     view = line.ljust(43) + '  use other models\n' + screen()
     assert strip_opencode_sidebar(view).splitlines()[0].strip() == line
     assert strip_opencode_sidebar('normal terminal line') == 'normal terminal line'
+
+
+def test_unwrapped_json_with_full_request_id_survives_narrow_viewport():
+    from herdr_talkback.logic_monitor import parse_result
+    line = '{"request_id":"' + 'a' * 32 + '","status":"continue"}'
+    view = line + '\n' + screen()
+    assert strip_opencode_sidebar(view).splitlines()[0] == line
+    assert parse_result(view, '', 'a' * 32) == 'continue'

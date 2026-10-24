@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import json
 from dataclasses import dataclass
 from typing import Optional
 
@@ -150,7 +151,19 @@ def strip_opencode_sidebar(text):
     borders = [re.match(r'^(\s*)╹(▀{8,})', line) for line in lines]
     border = [match for match in borders if match][-1]
     end = len(border.group(1)) + 1 + len(border.group(2))
-    return '\n'.join(_cell_slice(line, 0, end).rstrip() for line in lines)
+    output = []
+    for line in lines:
+        # recent_unwrapped may join a protocol response beyond the current
+        # viewport width. A complete JSON object is not sidebar decoration.
+        if line.lstrip().startswith('{'):
+            try:
+                if isinstance(json.loads(line), dict):
+                    output.append(line.rstrip())
+                    continue
+            except ValueError:
+                pass
+        output.append(_cell_slice(line, 0, end).rstrip())
+    return '\n'.join(output)
 
 
 def _last_codex_prompt_is_dim(text: str) -> bool:
