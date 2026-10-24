@@ -142,11 +142,11 @@ async def _delivery_sends_when_input_empty(tmp_path):
     ) in client.requests
 
 
-def test_delivery_reads_enough_recent_lines_for_codex_prompt(tmp_path):
-    asyncio.run(_delivery_reads_enough_recent_lines_for_codex_prompt(tmp_path))
+def test_delivery_reads_only_visible_screen_for_codex_prompt(tmp_path):
+    asyncio.run(_delivery_reads_only_visible_screen_for_codex_prompt(tmp_path))
 
 
-async def _delivery_reads_enough_recent_lines_for_codex_prompt(tmp_path):
+async def _delivery_reads_only_visible_screen_for_codex_prompt(tmp_path):
     message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
     client = FakeClient([EMPTY_PROMPT, EMPTY_PROMPT])
     state = TalkbackState(tmp_path / "state.db")
@@ -156,7 +156,7 @@ async def _delivery_reads_enough_recent_lines_for_codex_prompt(tmp_path):
 
     read_requests = [params for method, params in client.requests if method == "pane.read"]
     assert read_requests
-    assert all(params["lines"] == 80 for params in read_requests)
+    assert all(params['source'] == 'visible' and 'lines' not in params for params in read_requests)
 
 
 def test_delivery_blocks_when_target_has_real_input(tmp_path):

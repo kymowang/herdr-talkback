@@ -115,12 +115,12 @@ class LogicalPaneMonitor:
 
     async def _snapshot(self, pane_id):
         result = await self.client.request('pane.read', {
-            'pane_id': pane_id, 'source': 'recent_unwrapped', 'lines': 200, 'format': 'text'})
+            'pane_id': pane_id, 'source': 'visible', 'format': 'text'})
         return normalize_snapshot(result['read']['text'])
 
     async def _empty(self, pane_id):
         result = await self.client.request('pane.read', {
-            'pane_id': pane_id, 'source': 'recent', 'lines': 80, 'format': 'ansi'})
+            'pane_id': pane_id, 'source': 'visible', 'format': 'ansi'})
         return inspect_input(result['read']['text'], '').kind == 'empty'
 
     async def _observe(self, panes, now):

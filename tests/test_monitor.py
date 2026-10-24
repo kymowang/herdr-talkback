@@ -43,6 +43,7 @@ class FakeClient:
 
     async def request(self, method, params):
         assert method == "pane.read"
+        assert params['source'] == 'visible' and 'lines' not in params
         return {"read": {"text": self.text}}
 
 

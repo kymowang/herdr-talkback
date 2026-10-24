@@ -120,7 +120,7 @@ class Monitor:
 
     async def _read_recent(self, pane_id: str) -> str:
         result = await self.client.request(
-            "pane.read", {"pane_id": pane_id, "source": "recent", "lines": 80, "format": "text"}
+            "pane.read", {"pane_id": pane_id, "source": "visible", "format": "text"}
         )
         return result["read"]["text"]
 

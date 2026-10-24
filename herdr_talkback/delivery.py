@@ -162,7 +162,7 @@ class DeliveryService:
 
     async def _read_input(self, pane_id: str) -> str:
         result = await self.client.request(
-            "pane.read", {"pane_id": pane_id, "source": "recent", "lines": 80, "format": "ansi"}
+            "pane.read", {"pane_id": pane_id, "source": "visible", "format": "ansi"}
         )
         return result["read"]["text"]
 

@@ -18,6 +18,7 @@ class Client:
         self.text = {'p1': 'Next I can write tests.', 'm1': 'Ready'}
         self.inputs = {'p1': '\u203a ', 'm1': '\u203a '}
         self.sent = []
+        self.reads = []
         self.read_hook = None
 
     async def request(self, method, params):
@@ -25,6 +26,7 @@ class Client:
             return {'panes': [dict(p) for p in self.panes]}
         pane = params['pane_id']
         if method == 'pane.read':
+            self.reads.append(dict(params))
             if self.read_hook:
                 self.read_hook(pane, params)
             return {'read': {'text': self.inputs[pane] if params.get('format') == 'ansi' else self.text[pane]}}
@@ -113,6 +115,8 @@ def test_continue_once_and_restart_safe(rig):
         await engine.tick(); await engine.tick()
         assert len(delivery.sent) == 1 and len(client.sent) == 1
         assert LogicStore(store.state).attempted('p1', req['content_hash'])
+        assert client.reads
+        assert all(read['source'] == 'visible' and 'lines' not in read for read in client.reads)
     asyncio.run(scenario())
 
 

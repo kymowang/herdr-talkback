@@ -29,8 +29,10 @@ Store per-pane observations in SQLite: both statuses, normalized content and has
 stable-since timestamp, request ID, request snapshot hash, monitor pane ID, result,
 deadline and continuation attempt/outcome. Preserve an audit trail.
 
-Read a bounded recent transcript (up to 200 lines and 64 KiB), stripping ANSI and
-normalizing line endings. Ignore trailing blank lines; preserve meaningful text.
+Read only the currently visible screen (`source=visible`, no history line count;
+up to 64 KiB), stripping ANSI and normalizing line endings. All automatic monitor
+and input checks use visible snapshots without scrolling or collecting history.
+Ignore trailing blank lines; preserve meaningful text.
 This is a bounded observation, not the pane's complete conversation history.
 
 1. `working` or `blocked` takes precedence: copy the observed status into

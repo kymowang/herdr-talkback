@@ -160,8 +160,9 @@ monitor 必须已启动能理解提示词并输出 JSON 的 AI，保持空闲并
 修改配置后重启 Talkback 服务。此功能默认关闭，不会自动创建 AI 或监控所有窗格。
 
 Talkback 分别保存 `herdr_status`（Herdr 事实状态）和 `logic_status`（插件判断）。
-事实为 `working`/`blocked` 时直接记录并暂停判断；其他状态下，最近 200 行内容
+事实为 `working`/`blocked` 时直接记录并暂停判断；其他状态下，仅使用当前可见的一屏内容
 （最多 64 KiB，去除 ANSI、统一换行）稳定后交给 monitor，多个目标串行判断。
+目标、monitor 和输入框检查都使用 `visible` 快照，不请求历史内容，不主动翻页或滚动。
 内容变化进入 `init` 并重新计时；稳定后进入 `todo`，请求发出后为 `judging`。
 每 10 秒读取 monitor 回答，120 秒未得到有效回答则记为 `timeout`。
 
