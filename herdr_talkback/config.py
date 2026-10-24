@@ -8,6 +8,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 from .addressing import validate_node_id
 from .network_config import NetworkConfig, load_network
+from .logic_config import LogicMonitorConfig, parse_logic_config
 from .rules import parse_recovery_rules, parse_message_rules, RecoveryRule, MessageRule
 
 try:
@@ -47,6 +48,7 @@ class TalkbackConfig:
     alerts_pane_role: Optional[str] = None
     network: NetworkConfig = field(default_factory=NetworkConfig)
     peers: Mapping[str, Any] = field(default_factory=dict)
+    logic_monitor: LogicMonitorConfig = field(default_factory=LogicMonitorConfig)
 
 
 def default_state_path() -> Path:
@@ -117,6 +119,7 @@ def load_config(path: Optional[Path]) -> TalkbackConfig:
         alerts_pane_role=_optional_string(alerts.get("pane_role")),
         network=network,
         peers=peers,
+        logic_monitor=parse_logic_config(_mapping(raw.get('logic_monitor'))),
     )
 
 
