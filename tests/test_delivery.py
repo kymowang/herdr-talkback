@@ -721,6 +721,17 @@ async def _delivery_does_not_resend_when_residue_persists(tmp_path):
     assert client.requests.count(flush_send) == 1
 
 
+@pytest.mark.parametrize('text', ['\u203a continue', 'Esc to cancel', '\u203a user draft'])
+def test_strict_control_never_submits_existing_input_or_overlay(tmp_path, text):
+    async def scenario():
+        client = FakeClient([text])
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        result = await DeliveryService(client, FakeRegistry(), state).send_control('p-back', 'continue', strict=True)
+        assert not result.delivered
+        assert not any(method == 'pane.send_input' for method, params in client.requests)
+    asyncio.run(scenario())
+
+
 def test_send_control_flushes_own_residue_once(tmp_path):
     asyncio.run(_send_control_flushes_own_residue_once(tmp_path))
 

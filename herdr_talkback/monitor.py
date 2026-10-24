@@ -27,6 +27,7 @@ class Monitor:
         clock: Callable[[], float] = time.time,
         notifier=None,
         rules=None,
+        actions=None,
     ) -> None:
         self.rules = parse_recovery_rules(default_rules()["recovery_rules"]) if rules is None else rules
         self.client = client
@@ -39,6 +40,7 @@ class Monitor:
         self.clock = clock
         self.notifier = notifier or NullNotifier()
         self._unknown_since: dict[str, float] = {}
+        self.actions = actions
 
     async def handle_status_event(self, event: dict) -> None:
         data = event.get("data", {})
@@ -77,6 +79,14 @@ class Monitor:
             )
 
     async def _recover(self, role: str, pane_id: str, status: str, rule: RecoveryRule) -> None:
+        if self.actions is not None:
+            async with self.actions.lock(pane_id):
+                if pane_id not in self.actions.protected:
+                    await self._recover_locked(role, pane_id, status, rule)
+            return
+        await self._recover_locked(role, pane_id, status, rule)
+
+    async def _recover_locked(self, role: str, pane_id: str, status: str, rule: RecoveryRule) -> None:
         now = self.clock()
         pattern = rule.id
         cap = self.max_per_window if rule.max_per_30m is None else rule.max_per_30m
@@ -85,6 +95,8 @@ class Monitor:
         if not self.state.can_recover(pane_id, now, cooldown, max_per_window, 1800):
             self.state.record_event("recovery_suppressed", {"pane_id": pane_id, "role": role, "pattern": pattern})
             return
+        if self.actions is not None:
+            self.actions.invalidate(pane_id)
         result = await self.delivery.send_control(pane_id, rule.command)
         self.state.record_recovery(role, pane_id, status, pattern, rule.command, now=now)
         await notify_alert(

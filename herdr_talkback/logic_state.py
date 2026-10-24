@@ -1,9 +1,24 @@
 """Durable pane observations and at-most-once automatic actions."""
 import hashlib
 import uuid
+import sqlite3
+from contextlib import closing
 
 
 RESULTS = frozenset(('blocked', 'continue', 'waiting', 'done', 'unknown'))
+
+
+def read_status(path):
+    """Read existing observations without initializing or migrating the database."""
+    if not path.exists():
+        return []
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
+        db.row_factory = sqlite3.Row
+        if not db.execute("select 1 from sqlite_master where type='table' and name='logic_panes'").fetchone():
+            return []
+        return [dict(row) for row in db.execute('''select pane_id,herdr_status,logic_status,
+            content_hash,stable_since,updated_at,next_check_at,request_id,detail
+            from logic_panes order by pane_id''')]
 
 
 class LogicStore:
@@ -48,7 +63,7 @@ class LogicStore:
             db.execute('begin immediate')
             old = db.execute('select * from logic_panes where pane_id=?', (pane_id,)).fetchone()
             reset = old is None or old['content_hash'] != digest or (
-                old['herdr_status'] in ('working', 'blocked') and status not in ('working', 'blocked'))
+                old['herdr_status'] in ('working', 'blocked', 'offline') and status not in ('working', 'blocked', 'offline'))
             if status in ('working', 'blocked'):
                 logic, stable = status, now
                 reset = True

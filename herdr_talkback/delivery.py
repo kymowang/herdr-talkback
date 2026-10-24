@@ -132,9 +132,11 @@ class DeliveryService:
         await self._notify_delivery_failed(message, self.max_attempts, "delivery ambiguous")
         return DeliveryResult(False, "delivery ambiguous", self.max_attempts)
 
-    async def send_control(self, pane_id: str, text: str) -> DeliveryResult:
+    async def send_control(self, pane_id: str, text: str, *, strict: bool = False) -> DeliveryResult:
         before = await self._read_input(pane_id)
         before_state = inspect_input(before, text)
+        if strict and before_state.kind != "empty":
+            return DeliveryResult(False, "target input is not empty", 0)
         if before_state.kind == "occupied":
             return DeliveryResult(False, "target input occupied", 0)
         if before_state.kind == "unknown":
