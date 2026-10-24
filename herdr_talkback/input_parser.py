@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Optional
 
@@ -33,6 +34,9 @@ def inspect_input(
     allow_paste_block_residue: bool = False,
     allow_transformed_residue: bool = False,
 ) -> InputState:
+    opencode = _inspect_opencode(ansi_text, expected_message)
+    if opencode is not None:
+        return opencode
     segment = _segment_after_last_prompt(ansi_text)
     if segment is None:
         if DISMISSIBLE_OVERLAY_TEXT in _strip_ansi(ansi_text):
@@ -84,6 +88,54 @@ def inspect_input(
     if _looks_like_placeholder(input_line, visible):
         return InputState(kind="empty", text_after_prompt=visible)
     return InputState(kind="occupied", text_after_prompt=visible)
+
+
+def _cell_slice(text, start, end):
+    result, column = [], 0
+    for char in text:
+        width = 0 if unicodedata.combining(char) else (2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1)
+        if start <= column < end:
+            result.append(char)
+        column += width
+        if column >= end:
+            break
+    return ''.join(result)
+
+
+def _inspect_opencode(ansi_text, expected):
+    # OpenCode has a boxed composer, rather than a Codex/Claude prompt marker.
+    # The bottom border fixes its width; right-hand sidebar text is not input.
+    lines = [line for line in ANSI_RE.sub('', ansi_text).splitlines() if line.strip()]
+    borders = [(i, re.match(r'^(\s*)╹(▀{8,})', line)) for i, line in enumerate(lines)]
+    borders = [(i, match) for i, match in borders if match]
+    if not borders:
+        return None
+    index, border = borders[-1]
+    if index == 0 or not re.match(r'^\s*┃\s+(Build|Plan)\s*·', lines[index - 1]):
+        return None
+    if not any('ctrl+p' in line and 'commands' in line for line in lines[index + 1:]):
+        return None
+    if index + 2 != len(lines):
+        return InputState(kind='unknown', text_after_prompt='')
+    left = len(border.group(1))
+    end = left + 1 + len(border.group(2))
+    content = []
+    for line in reversed(lines[:index - 1]):
+        cells = _cell_slice(line, left, end)
+        if cells.startswith('┃'):
+            content.append(cells[1:].strip())
+        elif not cells.strip():
+            continue
+        else:
+            break
+    if not content:
+        return InputState(kind='unknown', text_after_prompt='')
+    visible = '\n'.join(reversed(content)).strip()
+    if not visible:
+        return InputState(kind='empty', text_after_prompt='')
+    if expected and visible == expected.strip():
+        return InputState(kind='residue', text_after_prompt=visible, contains_expected_message=True)
+    return InputState(kind='occupied', text_after_prompt=visible)
 
 
 def _last_codex_prompt_is_dim(text: str) -> bool:
