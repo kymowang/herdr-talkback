@@ -35,15 +35,33 @@ def parse_result(text, baseline, request_id):
         # A bounded terminal window can scroll. Correlation still requires the
         # unguessable current ID, absent from all pre-submission output.
         fresh = text
+        old = baseline.splitlines(keepends=True)
+        new = text.splitlines(keepends=True)
+        for size in range(min(len(old), len(new)), 0, -1):
+            if old[-size:] == new[:size]:
+                fresh = ''.join(new[size:])
+                break
     old_lines = set(baseline.splitlines())
     results = set()
-    fenced = False
+    fence = None
+    for line in baseline.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(('```', '~~~')):
+            marker = stripped[:3]
+            if fence is None:
+                fence = marker
+            elif marker == fence:
+                fence = None
     for line in fresh.splitlines():
         line = line.strip()
         if line.startswith(('```', '~~~')):
-            fenced = not fenced
+            marker = line[:3]
+            if fence is None:
+                fence = marker
+            elif marker == fence:
+                fence = None
             continue
-        if fenced or line in old_lines or not line.startswith('{'):
+        if fence or line in old_lines or not line.startswith('{'):
             continue
         try:
             pairs = json.loads(line, object_pairs_hook=list)

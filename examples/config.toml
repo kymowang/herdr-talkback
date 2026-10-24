@@ -11,6 +11,19 @@ unknown_threshold_seconds = 60
 continue_cooldown_seconds = 120
 max_continues_per_30m = 3
 
+# Optional semantic judgments by an already running dedicated AI pane.
+# Select exact pane IDs or unique pane names. Never include the judge in targets.
+[logic_monitor]
+enabled = false
+monitor_pane = "monitor"
+targets = ["worker"]
+observation_seconds = 10
+stable_seconds = 10
+poll_seconds = 10
+timeout_seconds = 120
+cooldown_seconds = 120
+max_continues_per_30m = 3
+
 [notify]
 enabled = true
 position = "bottom-right"

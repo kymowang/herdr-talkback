@@ -1,6 +1,6 @@
 import pytest
 
-from herdr_talkback.logic_state import LogicStore
+from herdr_talkback.logic_state import LogicStore, read_status
 from herdr_talkback.state import TalkbackState
 
 
@@ -53,5 +53,6 @@ def test_continue_waits_for_execution_and_does_not_reclassify(store):
     store.finish(req['request_id'], 'continue', 20, 120)
     assert not store.ready('p1', 1000, 10)
     assert store.reserve_attempt('p1', store.get('p1')['content_hash'], 21)
+    assert 'uncertain' in read_status(store.state.path)[0]['detail']
     store.attempt_outcome('p1', store.get('p1')['content_hash'], 'unknown', 22)
     assert store.attempts()[0]['outcome'] == 'unknown'

@@ -45,6 +45,33 @@ class FakeMonitor:
         self.events.append(event)
 
 
+def test_service_runs_logical_monitor_and_cancels_it():
+    async def scenario():
+        started, stopped = asyncio.Event(), asyncio.Event()
+
+        class Logical:
+            async def run_forever(self):
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    stopped.set()
+
+        class Silent:
+            async def subscribe(self, subscriptions):
+                await asyncio.Event().wait()
+                yield {}
+
+        service = TalkbackService(Silent(), FakeRegistry(), FakeMonitor(), logic_monitor=Logical())
+        task = asyncio.create_task(service.run_forever())
+        await asyncio.wait_for(started.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert stopped.is_set()
+    asyncio.run(scenario())
+
+
 class LifecycleClient(FakeClient):
     def __init__(self, event_name):
         super().__init__()

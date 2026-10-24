@@ -137,6 +137,56 @@ herdr-talkback pane name-from-tab --all --force
 
 独立 CLI 默认配置是 `~/.config/herdr-talkback/config.toml`。插件使用 `HERDR_PLUGIN_CONFIG_DIR` 与 `HERDR_PLUGIN_STATE_DIR`；初始配置中的 `{session}` 由 Herdr socket 路径的 hash 替换，使多个 Herdr 会话的数据库、队列和进程锁互不冲突。CLI 和插件必须连接同一个 `HERDR_SOCKET_PATH`。
 
+## 逻辑状态监控与自动继续
+
+可指定一个已运行 AI 的专用 pane 作为判断器，监控本机其他 pane。
+先用 `herdr-talkback pane list` 查看 pane ID/名称，再在插件配置中加入：
+
+```toml
+[logic_monitor]
+enabled = true
+monitor_pane = "monitor"
+targets = ["worker", "w2:p6"]
+observation_seconds = 10
+stable_seconds = 10
+poll_seconds = 10
+timeout_seconds = 120
+cooldown_seconds = 120
+max_continues_per_30m = 3
+```
+
+选择器使用 pane ID 或唯一 pane 名称；同名窗格不自动选择，monitor 不能监控自身。
+monitor 必须已启动能理解提示词并输出 JSON 的 AI，保持空闲并专供此功能使用。
+修改配置后重启 Talkback 服务。此功能默认关闭，不会自动创建 AI 或监控所有窗格。
+
+Talkback 分别保存 `herdr_status`（Herdr 事实状态）和 `logic_status`（插件判断）。
+事实为 `working`/`blocked` 时直接记录并暂停判断；其他状态下，最近 200 行内容
+（最多 64 KiB，去除 ANSI、统一换行）稳定后交给 monitor，多个目标串行判断。
+内容变化进入 `init` 并重新计时；稳定后进入 `todo`，请求发出后为 `judging`。
+每 10 秒读取 monitor 回答，120 秒未得到有效回答则记为 `timeout`。
+
+判断结果为 `blocked`、`continue`、`waiting`、`done`、`unknown`。
+需要用户决策、信息或明确授权时为 `blocked`；等待子代理/其他 pane 时为 `waiting`。
+等待执行下一步，以及“任务完成，如果需要还可以做 xxx”，都按 `continue` 推进；
+完成且没有后续动作才是 `done`。可恢复环境错误可以继续，永久访问/配置问题不默认重试。
+
+结果带请求 ID，与目标快照绑定；旧回答、提示词回显及过期结果不触发输入。
+执行前复查 pane 身份、内容、状态及输入框，仅在输入框为空时输入并提交 `continue`。
+不清空草稿、不关闭弹层；同一快照最多尝试一次，重启或提交不确定时不自动重发。
+与已有恢复规则共用每 pane 的执行锁和恢复计数。`waiting`、`unknown`、`timeout`
+在冷却后可以重新判断；`blocked`/`done` 等待内容或事实状态变化。
+此判断依赖 AI 和有限的终端快照，不能替代用户对后续任务范围的判断。
+
+只读查看记录（不需要运行 Herdr socket）：
+
+```bash
+herdr-talkback --config "$CFG" monitor status
+herdr-talkback --config "$CFG" monitor status --json
+```
+
+状态查询显示事实/逻辑状态、时间、快照 hash 和执行结果，不输出原始终端内容。
+终端快照和判断记录保存在本机状态数据库，按本机私有数据管理。
+
 ## 开发验证
 
 ## 跨主机通信（HTTPS 短连接）

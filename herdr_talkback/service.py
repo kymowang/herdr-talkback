@@ -30,6 +30,7 @@ class TalkbackService:
         dispatcher=None,
         local_node_id=None,
         registry_refresh_seconds: float = 5.0,
+        logic_monitor=None,
     ) -> None:
         self.client = client
         self.registry = registry
@@ -44,6 +45,7 @@ class TalkbackService:
             raise ValueError("registry refresh interval must be positive")
         self.registry_refresh_seconds = registry_refresh_seconds
         self._refresh_lock = asyncio.Lock()
+        self.logic_monitor = logic_monitor
 
     async def run_once(self) -> None:
         await self._run_subscription(stop_after_one=True)
@@ -102,6 +104,8 @@ class TalkbackService:
         tasks = [self._run_monitor_forever(), self._refresh_periodically()]
         if self.inbox is not None:
             tasks.append(self.inbox.serve_forever())
+        if self.logic_monitor is not None:
+            tasks.append(self.logic_monitor.run_forever())
         await asyncio.gather(*tasks)
 
     async def _refresh_periodically(self) -> None:
@@ -189,6 +193,21 @@ async def run_service(config, dry_run: bool = False) -> int:
         peer_adapter=peer_adapter,
     )
     inbox = DaemonInboxServer(config.daemon_socket_path, daemon_router.handle)
+    logic_monitor = None
+    actions = None
+    logic_config = getattr(config, 'logic_monitor', None)
+    if logic_config is not None and logic_config.enabled:
+        from .logic_monitor import LogicalPaneMonitor, resolve_selector
+        from .logic_state import LogicStore
+        from .pane_actions import PaneActions
+        logic_store = LogicStore(state)
+        actions = PaneActions(logic_store)
+        panes = (await client.request('pane.list', {})).get('panes', [])
+        try:
+            actions.protected = {resolve_selector(panes, logic_config.monitor_pane)['pane_id']}
+        except ValueError:
+            pass
+        logic_monitor = LogicalPaneMonitor(logic_config, client, logic_store, delivery, actions)
     monitor = Monitor(
         client,
         role_registry,
@@ -199,6 +218,7 @@ async def run_service(config, dry_run: bool = False) -> int:
         max_per_window=config.monitor_max_continues_per_30m,
         rules=getattr(config, "recovery_rules", None),
         notifier=notifier,
+        actions=actions,
     )
     service = TalkbackService(
         client,
@@ -209,6 +229,7 @@ async def run_service(config, dry_run: bool = False) -> int:
         adapter=adapter,
         dispatcher=dispatcher,
         local_node_id=config.core_node_id,
+        logic_monitor=logic_monitor,
     )
 
     try:

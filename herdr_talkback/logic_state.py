@@ -163,6 +163,9 @@ class LogicStore:
     def reserve_attempt(self, pane_id, digest, now):
         with self.state._connect() as db:
             cursor = db.execute("insert or ignore into logic_attempts values (?,?,?,'uncertain',?)", (pane_id, digest, now, now))
+            if cursor.rowcount == 1:
+                db.execute("update logic_panes set detail='continue: uncertain (reserved before submission)' where pane_id=? and content_hash=?",
+                           (pane_id, digest))
             return cursor.rowcount == 1
 
     def attempt_outcome(self, pane_id, digest, outcome, now):

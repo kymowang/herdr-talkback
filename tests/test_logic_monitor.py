@@ -90,6 +90,14 @@ def test_response_protocol_rejects_echo_old_ids_conflicts_and_fences():
     assert parse_result('{"request_id":"r1","status":"continue","extra":1}', '', 'r1') is None
 
 
+def test_fence_context_survives_baseline_and_scroll_boundary():
+    line = '{"request_id":"r1","status":"continue"}'
+    baseline = 'old\n```json\n'
+    assert parse_result(baseline + line + '\n```', baseline, 'r1') is None
+    baseline = 'old\n```json\ninside\n'
+    assert parse_result('inside\n```\n' + line, baseline, 'r1') == 'continue'
+
+
 def test_continue_once_and_restart_safe(rig):
     async def scenario():
         engine, store, client, delivery, clock = rig

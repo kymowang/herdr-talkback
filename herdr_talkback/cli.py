@@ -35,6 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=Path)
     sub = parser.add_subparsers(dest="command", required=True)
 
+    monitor = sub.add_parser('monitor', help='Inspect inferred pane states')
+    monitor_sub = monitor.add_subparsers(dest='monitor_command', required=True)
+    monitor_status = monitor_sub.add_parser('status')
+    monitor_status.add_argument('--json', action='store_true')
+
     peer = sub.add_parser('peer', help='Provision peer credentials')
     peer_sub = peer.add_subparsers(dest='peer_command', required=True)
     tls = peer_sub.add_parser('init-tls')
@@ -112,6 +117,23 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 
 async def _main_async(args) -> int:
+    if args.command == 'monitor':
+        from .logic_state import read_status
+        path = _resolve_read_config_path(args.config)
+        raw = {}
+        if path is not None:
+            with path.open('rb') as handle:
+                raw = tomllib.load(handle)
+        rows = read_status(configured_path(raw.get('state_path'), default_state_path()))
+        if args.json:
+            print(json.dumps(rows, ensure_ascii=False))
+        elif not rows:
+            print('No logical pane observations recorded.')
+        else:
+            for row in rows:
+                print(f"{row['pane_id']}  herdr_status={row['herdr_status']}  "
+                      f"logic_status={row['logic_status']}  {row['detail']}")
+        return 0
     if args.command == 'peer':
         try:
             from .certificates import provision
