@@ -124,7 +124,7 @@ def test_parse_message_accepts_configured_local_alias_as_source():
 
 @pytest.mark.parametrize('source,append', [('lead', True), ('lead2', True), ('scheduler', True), ('dev-be2', False), ('linux-main/lead2', True)])
 def test_configured_receipt_reminder(source, append):
-    reminder = '上述内容如果是任务而非通知，完成后请发回执给我'
+    reminder = '上述内容如果是任务而非通知，完成后请通过talkback发送回执给我'
     raw = f'[{source}->runner] 请处理'
     msg = parse_message(raw, (), {}, message_rules=parse_message_rules([dict(id='receipt', agents=['lead', 'lead2', 'scheduler'], append=reminder)]))
     assert msg.raw_text == raw + ('\n' + reminder if append else '')

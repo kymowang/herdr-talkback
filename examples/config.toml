@@ -150,7 +150,7 @@ window = "recent"
 id = "task-receipt"
 agents = ["lead", "lead2", "scheduler"]
 targets = ["*"]
-append = "上述内容如果是任务而非通知，完成后请发回执给我"
+append = "上述内容如果是任务而非通知，完成后请通过talkback发送回执给我"
 
 
 # Optional peer HTTPS listener. Install .[network] and provision certificates first.

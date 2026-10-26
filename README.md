@@ -90,7 +90,7 @@ max_per_30m = 0
 id = "task-receipt"
 agents = ["lead", "lead2", "scheduler"]
 targets = ["*"]
-append = "上述内容如果是任务而非通知，完成后请发回执给我"
+append = "上述内容如果是任务而非通知，完成后请通过talkback发送回执给我"
 ```
 
 `agents` 是发送方名称范围；`targets` 是接收方名称范围，省略时为全部。所有命中的追加规则按配置顺序组成独立行，重试不会重复追加完整后缀块。

@@ -284,12 +284,12 @@ def test_daemon_persists_configured_receipt_reminder(tmp_path):
     async def check():
         state = TalkbackState(tmp_path / 'state.db')
         state.init()
-        cfg = SimpleNamespace(core_node_id='linux-main', roles=('lead', 'dev-back'), aliases={}, message_rules=__import__('herdr_talkback.rules', fromlist=['parse_message_rules']).parse_message_rules([dict(id='receipt', agents=['lead'], append='上述内容如果是任务而非通知，完成后请发回执给我')]))
+        cfg = SimpleNamespace(core_node_id='linux-main', roles=('lead', 'dev-back'), aliases={}, message_rules=__import__('herdr_talkback.rules', fromlist=['parse_message_rules']).parse_message_rules([dict(id='receipt', agents=['lead'], append='上述内容如果是任务而非通知，完成后请通过talkback发送回执给我')]))
         router = DaemonMessageRouter(cfg, FakeRegistry(), FakeDispatcher(), state=state)
         response = await router.handle({'type': 'send', 'message': '[lead->dev-back] one'})
         assert response['ok']
         stored = state.get_message(response['message_id'])
-        assert stored['body'] == 'one\n上述内容如果是任务而非通知，完成后请发回执给我'
+        assert stored['body'] == 'one\n上述内容如果是任务而非通知，完成后请通过talkback发送回执给我'
         assert stored['raw_text'] == '[lead->dev-back] ' + stored['body']
     asyncio.run(check())
 
