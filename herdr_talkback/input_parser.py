@@ -112,11 +112,17 @@ def _inspect_opencode(ansi_text, expected):
     if not borders:
         return None
     index, border = borders[-1]
-    if index == 0 or not re.match(r'^\s*┃\s+(Build|Plan)\s*·', lines[index - 1]):
+    if index == 0 or not re.match(r'^\s*┃\s+(?:(?:Build|Plan)\s*·|Sisyphus\s+-\s+Ultraworker\b.*·.*OpenCode)', lines[index - 1]):
         return None
-    if not any('ctrl+p' in line and 'commands' in line for line in lines[index + 1:]):
+    trailing = lines[index + 1:]
+    if not trailing or 'ctrl+p' not in trailing[0] or 'commands' not in trailing[0]:
         return None
-    if index + 2 != len(lines):
+    is_home = 'Sisyphus - Ultraworker' in lines[index - 1]
+    if is_home:
+        extra = trailing[1:]
+        if any(not ('Tip Use up' in line or ('/status' in line and re.search(r'\b\d+\.\d+\.\d+\b', line))) for line in extra):
+            return InputState(kind='unknown', text_after_prompt='')
+    elif len(trailing) != 1:
         return InputState(kind='unknown', text_after_prompt='')
     left = len(border.group(1))
     end = left + 1 + len(border.group(2))
@@ -134,6 +140,11 @@ def _inspect_opencode(ansi_text, expected):
     visible = '\n'.join(reversed(content)).strip()
     if not visible:
         return InputState(kind='empty', text_after_prompt='')
+    if is_home and re.fullmatch(r'Ask anything…\s+"[^"\r\n]+"', visible):
+        line = next((line for line in reversed(ansi_text.splitlines()) if 'Ask anything…' in line), '')
+        placeholder = re.search(r'\x1b\[38;2;128;128;128m(?:\x1b\[48;2;\d+;\d+;\d+m)*Ask anything…', line)
+        if placeholder:
+            return InputState(kind='empty', text_after_prompt='')
     normalized = ''.join(visible.split())
     expected_normalized = ''.join(expected.split())
     if expected and (normalized == expected_normalized or (

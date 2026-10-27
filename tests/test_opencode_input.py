@@ -55,3 +55,30 @@ def test_unwrapped_json_with_full_request_id_survives_narrow_viewport():
     view = line + '\n' + screen()
     assert strip_opencode_sidebar(view).splitlines()[0] == line
     assert parse_result(view, '', 'a' * 32) == 'continue'
+
+
+def home_screen(input_text, color='128;128;128'):
+    return '\n'.join([
+        '         OpenCode',
+        '    ┃' + ' ' * 50,
+        '    ┃  \x1b[38;2;' + color + 'm\x1b[48;2;30;30;30m' + input_text + '\x1b[0m',
+        '    ┃' + ' ' * 50,
+        '    ┃  Sisyphus - Ultraworker auto · DeepSeek OpenCode Go',
+        '    ╹' + '▀' * 50,
+        '      tab agents  ctrl+p commands',
+        '      ● Tip Use up / ctrl+x down / left / right for parent/child session',
+        '  D:\\arc:master  ⊙ 4 MCP /status      1.19.3',
+    ])
+
+
+def test_opencode_home_screen_gray_placeholder_is_empty():
+    screen = home_screen('Ask anything… "Fix a TODO in the codebase"')
+    assert inspect_input(screen, '').kind == 'empty'
+
+
+def test_opencode_home_screen_draft_and_overlay_are_not_empty():
+    assert inspect_input(home_screen('continue', '255;255;255'), '').kind == 'occupied'
+    assert inspect_input(home_screen('Ask anything… "Fix a TODO in the codebase"', '255;255;255'), '').kind == 'occupied'
+    assert inspect_input(home_screen('') + '\nApproval required', '').kind == 'unknown'
+    stale = '\x1b[38;2;128;128;128mAsk anything… old placeholder\x1b[0m\n'
+    assert inspect_input(stale + home_screen('Ask anything… "Fix a TODO in the codebase"', '255;255;255'), '').kind == 'occupied'
