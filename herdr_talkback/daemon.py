@@ -131,14 +131,15 @@ class DaemonMessageRouter:
             try:
                 await self.registry.refresh()
                 if self.operator_store is not None:
-                    match = HEADER_RE.match(raw_message.strip())
+                    original = raw_message.strip()
+                    match = HEADER_RE.match(original)
                     if match:
                         target_name = match.group(2).strip()
                         registered = self.operator_store.pane(target_name)
                         if registered is not None:
                             if target_name in self.config.aliases or target_name in self.registry.snapshot():
                                 raise MessageParseError('registered pane name conflicts with a local pane or alias')
-                            raw_message = '[' + match.group(1).strip() + '->' + registered + '] ' + match.group(3)
+                            raw_message = original[:match.start(2)] + registered + original[match.end(2):]
                 message = parse_message(
                     raw_message,
                     self.config.roles,

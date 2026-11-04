@@ -69,7 +69,8 @@ def test_read_registered_pane_does_not_create_database(tmp_path):
     assert not path.parent.exists()
 
 
-def test_router_resolves_registered_remote_alias_without_contacting_peer(tmp_path):
+@pytest.mark.parametrize('arrow', ['->', '→'])
+def test_router_resolves_registered_remote_alias_without_contacting_peer(tmp_path, arrow):
     async def scenario():
         state = TalkbackState(tmp_path / 'state.db'); state.init()
         store = OperatorStore(state)
@@ -86,9 +87,10 @@ def test_router_resolves_registered_remote_alias_without_contacting_peer(tmp_pat
         peer, dispatcher = Peer(), Dispatcher()
         router = DaemonMessageRouter(cfg, Registry(), dispatcher, state=state,
                                      peer_adapter=peer, operator_store=store)
-        result = await router.handle({'type': 'send', 'message': '[sender->remote_lead] hello', 'dry_run': True})
+        result = await router.handle({'type': 'send', 'message': f'[sender{arrow}remote_lead] hello'})
         assert result['ok'] and result['target_endpoint'] == 'openclaw/lead'
         assert peer.target.qualified == 'openclaw/lead'
+        assert state.get_message(result['message_id'])['raw_text'] == f'[sender{arrow}openclaw/lead] hello'
     asyncio.run(scenario())
 
 
