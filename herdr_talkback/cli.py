@@ -39,6 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
     monitor_sub = monitor.add_subparsers(dest='monitor_command', required=True)
     monitor_status = monitor_sub.add_parser('status')
     monitor_status.add_argument('--json', action='store_true')
+    monitor_sub.add_parser('enable', help='Enable logical monitoring now and after restart')
+    monitor_sub.add_parser('disable', help='Disable logical monitoring now and after restart')
+    monitor_sub.add_parser('state', help='Show persisted monitor setting and service availability')
 
     peer = sub.add_parser('peer', help='Provision peer credentials')
     peer_sub = peer.add_subparsers(dest='peer_command', required=True)
@@ -63,6 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
     pane = sub.add_parser("pane", help="Inspect and name Herdr panes")
     pane_sub = pane.add_subparsers(dest="pane_command", required=True)
     pane_sub.add_parser("list", help="List all panes as a table")
+    register = pane_sub.add_parser('register', help='Register a name for a local or remote node/pane')
+    register.add_argument('name')
+    register.add_argument('address')
+    registered = pane_sub.add_parser('registered', help='List registered pane names')
+    registered.add_argument('--json', action='store_true')
+    unregister = pane_sub.add_parser('unregister', help='Remove a registered pane name')
+    unregister.add_argument('name')
     name_from_tab = pane_sub.add_parser("name-from-tab", help="Set a pane's name to its Tab name")
     target = name_from_tab.add_mutually_exclusive_group(required=True)
     target.add_argument("pane_id", nargs="?")
@@ -118,6 +128,51 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 async def _main_async(args) -> int:
     if args.command == 'monitor':
+        if args.monitor_command == 'state':
+            from .operator_controls import read_monitor_enabled
+            from .transport import local_endpoint_running
+            path = _resolve_read_config_path(args.config)
+            raw = {}
+            if path is not None:
+                with path.open('rb') as handle:
+                    raw = tomllib.load(handle)
+            configured = raw.get('logic_monitor', {}).get('enabled', False)
+            state_path = configured_path(raw.get('state_path'), default_state_path())
+            socket_path = _load_daemon_socket_path(args.config)
+            try:
+                if local_endpoint_running(socket_path):
+                    response = await submit_daemon_request(socket_path, {'type': 'monitor_state',
+                                                                          'state_path': str(state_path.resolve())})
+                    response['service_running'] = True
+                else:
+                    response = {'ok': True, 'enabled': read_monitor_enabled(state_path, bool(configured)),
+                                'active': False, 'service_running': False}
+            except (OSError, ValueError) as exc:
+                response = {'ok': False, 'error': str(exc)}
+            print(json.dumps(response, ensure_ascii=False))
+            return 0 if response.get('ok') else 1
+        if args.monitor_command in ('enable', 'disable'):
+            from .transport import local_endpoint_running
+            from .logic_config import parse_logic_config
+            from dataclasses import asdict
+            enabled = args.monitor_command == 'enable'
+            try:
+                state = _load_read_state(args.config)
+                if enabled:
+                    cfg = load_config(args.config)
+                    values = asdict(cfg.logic_monitor)
+                    values['enabled'] = True
+                    parse_logic_config(values)
+                socket_path = _load_daemon_socket_path(args.config)
+                if local_endpoint_running(socket_path):
+                    response = await submit_daemon_request(socket_path, {'type': 'monitor_control', 'enabled': enabled,
+                                                                        'state_path': str(state.path.resolve())})
+                else:
+                    response = {'ok': False, 'error': 'Talkback service is not reachable for this configuration; verify --config and HERDR_SOCKET_PATH.'}
+            except (ValueError, OSError, RuntimeError) as exc:
+                response = {'ok': False, 'error': str(exc)}
+            print(json.dumps(response, ensure_ascii=False))
+            return 0 if response.get('ok') else 1
         from .logic_state import read_status
         path = _resolve_read_config_path(args.config)
         raw = {}
@@ -134,6 +189,39 @@ async def _main_async(args) -> int:
                 print(f"{row['pane_id']}  herdr_status={row['herdr_status']}  "
                       f"logic_status={row['logic_status']}  {row['detail']}")
         return 0
+    if args.command == 'pane' and args.pane_command in ('register', 'registered', 'unregister'):
+        from .operator_controls import OperatorStore
+        try:
+            cfg = load_config(args.config)
+            state = _load_read_state(args.config)
+            store = OperatorStore(state)
+            if args.pane_command == 'register':
+                if args.name in cfg.aliases:
+                    raise ValueError('name conflicts with a configured alias')
+                panes = (await HerdrClient(cfg.socket_path).request('pane.list', {})).get('panes', [])
+                if any(pane.get('label') == args.name for pane in panes):
+                    raise ValueError('name conflicts with a local pane')
+                store.register_pane(args.name, args.address, cfg)
+                print(json.dumps({'ok': True, 'name': args.name, 'address': args.address}))
+            elif args.pane_command == 'unregister':
+                if not store.remove_pane(args.name):
+                    raise ValueError('registered pane not found')
+                print(json.dumps({'ok': True, 'name': args.name}))
+            else:
+                values = store.panes()
+                for row in values:
+                    node = row['address'].split('/', 1)[0]
+                    row['location'] = 'local' if node == cfg.core_node_id else 'remote'
+                    row['peer_url'] = cfg.peers[node].url if node in cfg.peers else None
+                if args.json:
+                    print(json.dumps(values, ensure_ascii=False))
+                else:
+                    for row in values:
+                        print(f"{row['name']}  {row['address']}  {row['location']}  {row['peer_url'] or '-'}")
+            return 0
+        except (ValueError, OSError, RuntimeError) as exc:
+            print(json.dumps({'ok': False, 'error': str(exc)}, ensure_ascii=False))
+            return 1
     if args.command == 'peer':
         try:
             from .certificates import provision
@@ -377,6 +465,11 @@ async def _main_async(args) -> int:
 
     if args.command == "send":
         try:
+            from .operator_controls import read_registered_pane
+            from .messages import HEADER_RE, MessageParseError
+            match = HEADER_RE.match(args.message.strip())
+            if match and read_registered_pane(cfg.state_path, match.group(2).strip()):
+                raise MessageParseError('registered pane names require daemon delivery; omit --direct')
             message = parse_message(
                 args.message,
                 cfg.roles,

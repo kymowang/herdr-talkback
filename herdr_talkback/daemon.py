@@ -8,7 +8,7 @@ from typing import Any, Awaitable, Callable, Mapping, Optional
 from .transport import LocalServer, open_local_connection, start_local_server
 from .addressing import EndpointAddress, parse_endpoint_address
 from .core_types import CoreMessage, CoreMessageState
-from .messages import MessageParseError, parse_message
+from .messages import HEADER_RE, MessageParseError, parse_message
 from .notifier import NullNotifier, notify_alert
 from .types import MessageState
 
@@ -88,16 +88,39 @@ class DaemonInboxServer:
 
 
 class DaemonMessageRouter:
-    def __init__(self, config, registry, dispatcher, state=None, notifier=None, peer_adapter=None) -> None:
+    def __init__(self, config, registry, dispatcher, state=None, notifier=None, peer_adapter=None, operator_store=None, monitor_controller=None) -> None:
         self.config = config
         self.registry = registry
         self.dispatcher = dispatcher
         self.state = state
         self.notifier = notifier or NullNotifier()
         self.peer_adapter = peer_adapter
+        self.operator_store = operator_store
+        self.monitor_controller = monitor_controller
         self._lock = asyncio.Lock()
 
     async def handle(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        if payload.get('type') == 'monitor_state':
+            if self.monitor_controller is None:
+                return {'ok': False, 'error': 'monitor control is unavailable'}
+            if payload.get('state_path') != str(self.state.path.resolve()):
+                return {'ok': False, 'error': 'CLI configuration does not match the running service state'}
+            task = self.monitor_controller.task
+            default = getattr(getattr(self.config, 'logic_monitor', None), 'enabled', False)
+            return {'ok': True, 'enabled': self.operator_store.monitor_enabled(default),
+                    'active': task is not None and not task.done()}
+        if payload.get('type') == 'monitor_control':
+            if self.monitor_controller is None:
+                return {'ok': False, 'error': 'monitor control is unavailable'}
+            if type(payload.get('enabled')) is not bool:
+                return {'ok': False, 'error': 'enabled must be boolean'}
+            if payload.get('state_path') != str(self.state.path.resolve()):
+                return {'ok': False, 'error': 'CLI configuration does not match the running service state'}
+            try:
+                await self.monitor_controller.set_enabled(payload['enabled'])
+            except (ValueError, OSError) as exc:
+                return {'ok': False, 'error': str(exc)}
+            return {'ok': True, 'enabled': payload['enabled'], 'applied': True}
         if payload.get("type") != "send":
             return {"ok": False, "error": "unsupported daemon request type"}
         raw_message = payload.get("message")
@@ -107,6 +130,15 @@ class DaemonMessageRouter:
         async with self._lock:
             try:
                 await self.registry.refresh()
+                if self.operator_store is not None:
+                    match = HEADER_RE.match(raw_message.strip())
+                    if match:
+                        target_name = match.group(2).strip()
+                        registered = self.operator_store.pane(target_name)
+                        if registered is not None:
+                            if target_name in self.config.aliases or target_name in self.registry.snapshot():
+                                raise MessageParseError('registered pane name conflicts with a local pane or alias')
+                            raw_message = '[' + match.group(1).strip() + '->' + registered + '] ' + match.group(3)
                 message = parse_message(
                     raw_message,
                     self.config.roles,

@@ -483,10 +483,15 @@ async def _run_service_dry_run_does_not_migrate_existing_schema(monkeypatch, tmp
 def _install_minimal_service_fakes(monkeypatch, events):
     class FakeState:
         def __init__(self, path, local_node_id):
-            pass
+            self.path = path
 
         def init(self):
             pass
+
+        def _connect(self):
+            db = sqlite3.connect(self.path)
+            db.row_factory = sqlite3.Row
+            return db
 
     class FakeClient:
         def __init__(self, socket_path):

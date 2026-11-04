@@ -133,7 +133,7 @@ herdr-talkback pane name-from-tab --all --force
 
 例如 Tab 名为 `jupyter`，执行后该窗格的 `NAME` 也变为 `jupyter`。默认跳过已有名称的窗格，`--force` 可强制覆盖，也可用于单个窗格。`--all` 处理当前 Herdr 会话的全部窗格（包括其他 workspace）；同一 Tab 中的多个窗格会得到相同名称。此命令只执行一次复制，不会随 Tab 改名自动同步；Tab 无名称时保持原名称并返回非零退出码。Talkback 消息角色只接受字母、数字、点、下划线和连字符，包含空格或中文的名称仅用于展示。
 
-未安装 Python 包时可在仓库目录使用 `python3 -m herdr_talkback` 代替 `herdr-talkback`。消息头支持 `→`/`->` 和本机限定地址。跨主机目标被拒绝。
+未安装 Python 包时可在仓库目录使用 `python3 -m herdr_talkback` 代替 `herdr-talkback`。消息头支持 `→`/`->` 和 `节点/pane` 地址；跨主机通信需先配置对端。
 
 独立 CLI 默认配置是 `~/.config/herdr-talkback/config.toml`。插件使用 `HERDR_PLUGIN_CONFIG_DIR` 与 `HERDR_PLUGIN_STATE_DIR`；初始配置中的 `{session}` 由 Herdr socket 路径的 hash 替换，使多个 Herdr 会话的数据库、队列和进程锁互不冲突。CLI 和插件必须连接同一个 `HERDR_SOCKET_PATH`。
 
@@ -187,6 +187,38 @@ herdr-talkback --config "$CFG" monitor status --json
 
 状态查询显示事实/逻辑状态、时间、快照 hash 和执行结果，不输出原始终端内容。
 终端快照和判断记录保存在本机状态数据库，按本机私有数据管理。
+
+运行中的逻辑监控可以通过命令立即关闭或启用：
+
+```bash
+herdr-talkback --config "$CFG" monitor disable
+herdr-talkback --config "$CFG" monitor enable
+herdr-talkback --config "$CFG" monitor state
+```
+
+命令只控制逻辑监控，原有恢复规则和消息服务继续运行。启用前必须在配置中指定
+`monitor_pane` 和 `targets`。命令的选择保存在当前 Herdr 会话状态数据库中，重启后
+继续生效，并优先于配置文件的 `enabled`；`monitor state` 显示保存的选择和服务是否
+运行，并区分实际监控任务是否运行。启停命令要求服务正在运行；服务未运行时返回错误。
+
+## 注册通信名称
+
+给本机或已配置的远端节点登记容易记忆的名称，供 `send` 使用：
+
+```bash
+herdr-talkback --config "$CFG" pane register local_dev linux-main/ast-dev1
+herdr-talkback --config "$CFG" pane register remote_lead openclaw/lead
+herdr-talkback --config "$CFG" pane registered --json
+herdr-talkback --config "$CFG" send '[ast-dev3->remote_lead] 消息内容'
+herdr-talkback --config "$CFG" pane unregister remote_lead
+```
+
+`节点/pane` 是统一的逻辑地址：本机节点走本地 Herdr socket，远端节点使用
+`[peers.节点]` 中配置的 HTTPS 地址、端口和认证。`pane registered` 显示名称、
+逻辑地址、本地/远端及远端 URL；登记信息仅保存在当前机器和 Herdr 会话的状态
+数据库中，不会自动同步到另一台机器。远端节点必须先在配置中设置；登记时要求能
+连接本地 Herdr，并拒绝与现有本机 pane 或配置别名冲突的名称。登记名称用于普通队列
+投递，不支持 `--direct`。
 
 ## 开发验证
 

@@ -150,6 +150,8 @@ async def run_service(config, dry_run: bool = False) -> int:
 
     state = TalkbackState(config.state_path, local_node_id=config.core_node_id)
     state.init()
+    from .operator_controls import OperatorStore, MonitorController
+    operator_store = OperatorStore(state)
     notifier = HerdrNotifier(
         client,
         enabled=config.notify_enabled,
@@ -191,23 +193,31 @@ async def run_service(config, dry_run: bool = False) -> int:
         state=state,
         notifier=notifier,
         peer_adapter=peer_adapter,
+        operator_store=operator_store,
     )
     inbox = DaemonInboxServer(config.daemon_socket_path, daemon_router.handle)
     logic_monitor = None
-    actions = None
+    from .logic_monitor import LogicalPaneMonitor, resolve_selector
+    from .logic_state import LogicStore
+    from .pane_actions import PaneActions
+    from .logic_config import parse_logic_config
+    from dataclasses import asdict
+    logic_store = LogicStore(state)
+    actions = PaneActions(logic_store)
     logic_config = getattr(config, 'logic_monitor', None)
-    if logic_config is not None and logic_config.enabled:
-        from .logic_monitor import LogicalPaneMonitor, resolve_selector
-        from .logic_state import LogicStore
-        from .pane_actions import PaneActions
-        logic_store = LogicStore(state)
-        actions = PaneActions(logic_store)
-        panes = (await client.request('pane.list', {})).get('panes', [])
-        try:
-            actions.protected = {resolve_selector(panes, logic_config.monitor_pane)['pane_id']}
-        except ValueError:
-            pass
-        logic_monitor = LogicalPaneMonitor(logic_config, client, logic_store, delivery, actions)
+    monitor_controller = None
+    if logic_config is not None:
+        def create_monitor():
+            values = asdict(logic_config)
+            values['enabled'] = True
+            checked = parse_logic_config(values)
+            for name, info in role_registry.snapshot().items():
+                if name == checked.monitor_pane or info.pane_id == checked.monitor_pane:
+                    actions.protected.add(info.pane_id)
+            return LogicalPaneMonitor(checked, client, logic_store, delivery, actions)
+
+        monitor_controller = MonitorController(operator_store, create_monitor)
+        daemon_router.monitor_controller = monitor_controller
     monitor = Monitor(
         client,
         role_registry,
@@ -233,6 +243,13 @@ async def run_service(config, dry_run: bool = False) -> int:
     )
 
     try:
+        if logic_config is not None and operator_store.monitor_enabled(logic_config.enabled):
+            panes = (await client.request('pane.list', {})).get('panes', [])
+            try:
+                actions.protected = {resolve_selector(panes, logic_config.monitor_pane)['pane_id']}
+            except ValueError:
+                pass
+            await monitor_controller.set_enabled(True, persist=False)
         if peer_server is not None:
             async with peer_server:
                 await dispatcher.recover()
@@ -241,6 +258,8 @@ async def run_service(config, dry_run: bool = False) -> int:
             await dispatcher.recover()
             await service.run_forever()
     finally:
+        if monitor_controller is not None:
+            await monitor_controller.close()
         await dispatcher.close()
     return 0
 
