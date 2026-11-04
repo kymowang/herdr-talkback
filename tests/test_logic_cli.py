@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 from herdr_talkback import cli
 from herdr_talkback.logic_state import LogicStore
@@ -102,3 +103,75 @@ def test_monitor_enable_uses_live_daemon_and_validates_configuration(tmp_path, m
     assert json.loads(capsys.readouterr().out)['applied'] is True
     assert calls == [{'type': 'monitor_control', 'enabled': True,
                       'state_path': str((tmp_path / 'state.db').resolve())}]
+
+
+def test_monitor_without_config_targets_discovered_plugin_daemon(tmp_path, monkeypatch, capsys):
+    from herdr_talkback import transport
+    plugin_dir = tmp_path / 'plugin'; plugin_dir.mkdir()
+    state_path = tmp_path / 'plugin-state.db'
+    (plugin_dir / 'config.toml').write_text('state_path="' + state_path.as_posix() + '"\n'
+        'daemon_socket_path="' + (tmp_path / 'plugin.sock').as_posix() + '"\n', encoding='utf-8')
+    monkeypatch.setenv('HERDR_SOCKET_PATH', str(tmp_path / 'herdr.sock'))
+    monkeypatch.setenv('HERDR_BIN_PATH', 'fake-herdr')
+    monkeypatch.delenv('HERDR_PLUGIN_CONFIG_DIR', raising=False)
+    monkeypatch.setattr(cli.subprocess, 'run', lambda *a, **k: SimpleNamespace(returncode=0, stdout=str(plugin_dir)+'\n'))
+    monkeypatch.setattr(transport, 'local_endpoint_running', lambda path: True)
+    calls = []
+    async def request(path, payload):
+        calls.append((path, payload))
+        return {'ok': True, 'enabled': False, 'applied': True}
+    monkeypatch.setattr(cli, 'submit_daemon_request', request)
+    assert cli.main(['monitor', 'disable']) == 0
+    assert calls[0][0] == tmp_path / 'plugin.sock'
+    assert calls[0][1]['state_path'] == str(state_path.resolve())
+
+
+def test_monitor_disable_flag_uses_same_control_command(tmp_path, monkeypatch, capsys):
+    from herdr_talkback import transport
+    monkeypatch.setenv('HERDR_SOCKET_PATH', str(tmp_path / 'herdr.sock'))
+    monkeypatch.setattr(transport, 'local_endpoint_running', lambda path: True)
+    cfg = tmp_path / 'config.toml'
+    cfg.write_text('state_path="' + (tmp_path / 'state.db').as_posix() + '"\n', encoding='utf-8')
+    calls = []
+    async def request(path, payload):
+        calls.append(payload)
+        return {'ok': True, 'enabled': False, 'applied': True}
+    monkeypatch.setattr(cli, 'submit_daemon_request', request)
+    assert cli.main(['--config', str(cfg), 'monitor', '--disable']) == 0
+    assert calls[0]['enabled'] is False
+
+
+def test_explicit_config_is_never_replaced_by_discovery(tmp_path, monkeypatch, capsys):
+    from herdr_talkback import transport
+    monkeypatch.setenv('HERDR_SOCKET_PATH', str(tmp_path / 'herdr.sock'))
+    monkeypatch.setattr(transport, 'local_endpoint_running', lambda path: True)
+    monkeypatch.setattr(cli, '_discover_plugin_config', lambda: (_ for _ in ()).throw(AssertionError('must not discover')))
+    cfg = tmp_path / 'standalone.toml'
+    cfg.write_text('state_path="' + (tmp_path / 'standalone.db').as_posix() + '"\n', encoding='utf-8')
+    calls = []
+    async def request(path, payload):
+        calls.append(payload)
+        return {'ok': True, 'enabled': False, 'applied': True}
+    monkeypatch.setattr(cli, 'submit_daemon_request', request)
+    assert cli.main(['--config', str(cfg), 'monitor', 'disable']) == 0
+    assert calls[0]['state_path'] == str((tmp_path / 'standalone.db').resolve())
+
+
+def test_monitor_rejects_subcommand_and_conflicting_flag():
+    import pytest
+    with pytest.raises(SystemExit):
+        cli.main(['monitor', '--disable', 'enable'])
+
+
+def test_monitor_old_daemon_error_explains_config_and_restart(tmp_path, monkeypatch, capsys):
+    from herdr_talkback import transport
+    monkeypatch.setenv('HERDR_SOCKET_PATH', str(tmp_path / 'herdr.sock'))
+    monkeypatch.setattr(transport, 'local_endpoint_running', lambda path: True)
+    cfg = tmp_path / 'config.toml'
+    cfg.write_text('state_path="' + (tmp_path / 'state.db').as_posix() + '"\n', encoding='utf-8')
+    async def request(path, payload):
+        return {'ok': False, 'error': 'unsupported daemon request type'}
+    monkeypatch.setattr(cli, 'submit_daemon_request', request)
+    assert cli.main(['--config', str(cfg), 'monitor', 'disable']) == 1
+    error = json.loads(capsys.readouterr().out)['error']
+    assert '--config' in error and 'restart' in error

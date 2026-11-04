@@ -207,6 +207,10 @@ herdr-talkback --config "$CFG" monitor enable
 herdr-talkback --config "$CFG" monitor state
 ```
 
+在 Herdr 会话中省略 `--config` 时，`monitor` 命令优先查找当前 Herdr 的插件配置；
+如需控制独立 CLI 配置，使用 `--config` 显式指定。`monitor --disable` 和
+`monitor --enable` 分别与 `monitor disable`、`monitor enable` 等价。
+
 命令只控制逻辑监控，原有恢复规则和消息服务继续运行。启用前必须在配置中指定
 `monitor_pane` 和 `targets`。命令的选择保存在当前 Herdr 会话状态数据库中，重启后
 继续生效，并优先于配置文件的 `enabled`；`monitor state` 显示保存的选择和服务是否

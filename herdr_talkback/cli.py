@@ -3,6 +3,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
+import shutil
+import subprocess
 import time
 import unicodedata
 from pathlib import Path
@@ -36,7 +39,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     monitor = sub.add_parser('monitor', help='Inspect inferred pane states')
-    monitor_sub = monitor.add_subparsers(dest='monitor_command', required=True)
+    monitor_flags = monitor.add_mutually_exclusive_group()
+    monitor_flags.add_argument('--enable', dest='monitor_flag', action='store_const', const='enable')
+    monitor_flags.add_argument('--disable', dest='monitor_flag', action='store_const', const='disable')
+    monitor_sub = monitor.add_subparsers(dest='monitor_command')
     monitor_status = monitor_sub.add_parser('status')
     monitor_status.add_argument('--json', action='store_true')
     monitor_sub.add_parser('enable', help='Enable logical monitoring now and after restart')
@@ -119,11 +125,44 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == 'monitor':
+        if args.monitor_flag and args.monitor_command:
+            parser.error('use either a monitor subcommand or a monitor flag')
+        args.monitor_command = args.monitor_command or args.monitor_flag
+        if not args.monitor_command:
+            parser.error('monitor requires status, state, enable, or disable')
+        if args.config is None:
+            args.config = _discover_plugin_config()
     try:
         return asyncio.run(_main_async(args))
     except KeyboardInterrupt:
         return 130
+
+
+def _discover_plugin_config():
+    """Prefer the active Herdr plugin's config for monitor commands."""
+    root = os.environ.get('HERDR_PLUGIN_CONFIG_DIR')
+    if root:
+        path = Path(root) / 'config.toml'
+        if path.is_file():
+            return path
+    if not os.environ.get('HERDR_SOCKET_PATH'):
+        return None
+    herdr = os.environ.get('HERDR_BIN_PATH') or shutil.which('herdr')
+    if not herdr:
+        return None
+    try:
+        result = subprocess.run([herdr, 'plugin', 'config-dir', 'herdr-talkback'],
+                                capture_output=True, encoding='utf-8', errors='replace', timeout=5)
+        if result.returncode == 0 and result.stdout.strip():
+            path = Path(result.stdout.strip()) / 'config.toml'
+            if path.is_file():
+                return path
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
 
 
 async def _main_async(args) -> int:
@@ -167,6 +206,8 @@ async def _main_async(args) -> int:
                 if local_endpoint_running(socket_path):
                     response = await submit_daemon_request(socket_path, {'type': 'monitor_control', 'enabled': enabled,
                                                                         'state_path': str(state.path.resolve())})
+                    if response.get('error') == 'unsupported daemon request type':
+                        response['error'] += '; verify --config and restart the intended Talkback service with a current version.'
                 else:
                     response = {'ok': False, 'error': 'Talkback service is not reachable for this configuration; verify --config and HERDR_SOCKET_PATH.'}
             except (ValueError, OSError, RuntimeError) as exc:
