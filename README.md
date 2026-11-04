@@ -6,6 +6,17 @@ Herdr 原生插件：在有角色名称的 agent pane 之间可靠转发消息�
 
 支持 Windows、Linux 和 macOS，需要 Python 3.9+、Herdr 0.9.1+。Python 3.9/3.10 还需要 `tomli`，通过安装本项目自动安装。
 
+也可以生成包含 Talkback、Herdr 插件清单和 Codex skill 的跨平台安装包：
+
+```bash
+python tools/build_bundle.py
+```
+
+生成的 `dist/herdr-talkback-0.1.0-bundle.zip` 解压后，在 Herdr 会话内运行
+`python install.py`；Linux/macOS 可用 `python3 install.py`。安装默认包含跨机依赖，
+需要可用的 Python 包源；`--local-only` 仅安装本地功能。安装入口和升级说明见包内
+`INSTALL.md`。脚本保留既有配置、数据库和网络凭据，不会静默覆盖不同内容的 skill。
+
 先安装 Python 包，再注册插件。安装会生成 `herdr-talkback` 和 `herdr-talkback-plugin` 入口，绑定安装时的 Python 解释器，不依赖系统中的 `python`/`python3` 别名。两个入口所在目录必须在 Herdr 的 `PATH` 中；使用虚拟环境时，应先激活环境再启动 Herdr。
 
 Linux/macOS：
