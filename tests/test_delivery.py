@@ -2,7 +2,13 @@ import asyncio
 
 import pytest
 
-from herdr_talkback.delivery import DeliveryService
+from herdr_talkback.delivery import DeliveryService as RealDeliveryService
+
+
+class DeliveryService(RealDeliveryService):
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("post_send_check_seconds", 0)
+        super().__init__(*args, **kwargs)
 from herdr_talkback.core_types import CoreMessage, CoreMessageState
 from herdr_talkback.messages import parse_message
 from herdr_talkback.state import TalkbackState
@@ -846,3 +852,34 @@ async def _core_mode_delivers_pre_enqueued_message_without_replacing_core_state(
     assert [attempt["reason"] for attempt in state.list_attempts(core_message.message_id)] == [
         "pane.send_input sent",
     ]
+
+
+def test_delivery_checks_for_stuck_input_five_seconds_after_send(tmp_path):
+    async def scenario():
+        residue = f"❯\x1b[38;2;255;255;255m{MESSAGE_TEXT}\x1b[0m"
+        client = FakeClient([EMPTY_PROMPT, residue, EMPTY_PROMPT])
+        sleeper = FakeSleeper()
+        state = TalkbackState(tmp_path / 'state.db')
+        state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, sleep=sleeper.sleep, post_send_check_seconds=5).deliver(
+            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert sleeper.delays[0] == 5
+        assert result.delivered
+        assert client.requests.count(('pane.send_input', {'pane_id': 'p-back', 'text': '', 'keys': ['enter']})) == 1
+    asyncio.run(scenario())
+
+
+def test_delayed_check_does_not_submit_different_input(tmp_path):
+    async def scenario():
+        client = FakeClient([EMPTY_PROMPT, OCCUPIED_PROMPT])
+        sleeper = FakeSleeper()
+        state = TalkbackState(tmp_path / 'state.db')
+        state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
+                                       sleep=sleeper.sleep, post_send_check_seconds=5).deliver(
+            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert sleeper.delays == [5]
+        assert not result.delivered
+        assert not any(method == 'pane.send_input' and params['text'] == ''
+                       for method, params in client.requests)
+    asyncio.run(scenario())

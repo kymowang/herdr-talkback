@@ -30,6 +30,7 @@ class DeliveryService:
         manage_message_state: bool = True,
         verify_timeout_ms: int = 0,
         verify_poll_interval_seconds: float = 0.25,
+        post_send_check_seconds: float = 5,
     ) -> None:
         self.client = client
         self.registry = registry
@@ -41,6 +42,7 @@ class DeliveryService:
         self.manage_message_state = manage_message_state
         self.verify_timeout_ms = verify_timeout_ms
         self.verify_poll_interval_seconds = verify_poll_interval_seconds
+        self.post_send_check_seconds = post_send_check_seconds
 
     async def deliver(self, message: RoutedMessage) -> DeliveryResult:
         pane_id = self.registry.resolve_pane(message.resolved_target)
@@ -109,6 +111,8 @@ class DeliveryService:
             self.state.record_attempt(message.message_id, attempt, "sending", "verifying", "pane.send_input sent")
             self._update_message_state(message.message_id, MessageState.VERIFYING, "verifying delivery")
 
+            if self.post_send_check_seconds > 0:
+                await self.sleep(self.post_send_check_seconds)
             verified = await self._verify(pane_id, message.raw_text)
             if verified == "delivered":
                 self._update_message_state(message.message_id, MessageState.DELIVERED, "input cleared")
