@@ -17,6 +17,30 @@ def normalize_snapshot(text):
     return text.encode('utf-8')[-SNAPSHOT_LIMIT:].decode('utf-8', errors='ignore').rstrip('\n')
 
 
+# 助手消息块的起首标记:Codex 用 "•",Claude 用 "●"(其它 CLI 无此标记时回退整屏)。
+BULLET_LINE = re.compile(r'^[•●]\s')
+# 工具调用也用同样的点标记(Codex "• Ran …" / Claude "● Update(…)"),它们不是消息正文:
+# 截到工具行会让判断器只看到命令输出,看不到这一轮真正的结论。
+TOOL_LINE = re.compile(
+    r'^[•●]\s+(?:Ran|Explored|Read|Searched|Listed|Viewed|Update|Wrote|Write|Edit|'
+    r'MultiEdit|Bash|Glob|Grep|Task|TodoWrite|WebFetch|WebSearch|NotebookEdit|'
+    r'Interacted|Waiting|Waited|Finished|Completed|Background|Working)(?:\(|\s|$)')
+
+
+def trim_snapshot(text):
+    """只保留最后一段「以点开头」的助手消息;找不到就回退整屏。
+
+    判断器只需要"这一轮最后说了什么",整屏里前面的历史既增加噪声也更易让占位/旧结论
+    干扰判断。缩进的列表项(以空格开头)不算段落起点;工具调用行也不算消息起点。
+    """
+    lines = text.split('\n')
+    for index in range(len(lines) - 1, -1, -1):
+        line = lines[index]
+        if BULLET_LINE.match(line) and not TOOL_LINE.match(line):
+            return '\n'.join(lines[index:]).rstrip('\n')
+    return text
+
+
 def resolve_selector(panes, selector):
     ids = [p for p in panes if p['pane_id'] == selector]
     matches = ids or [p for p in panes if p.get('label') == selector]
@@ -113,13 +137,16 @@ class LogicalPaneMonitor:
     async def _panes(self):
         return (await self.client.request('pane.list', {})).get('panes', [])
 
-    async def _snapshot(self, pane_id):
+    async def _snapshot(self, pane_id, trim=False):
         # 读 ANSI 而不是纯文本:只有 ANSI 才分得出"输入框为空但有 dim 占位提示"
         # 与"用户真的敲了同样一行"。sanitize_snapshot 把前者换成固定标记,
         # 避免判断器把 ghost 文本当成待执行的用户输入(Codex/Claude/OpenCode 都覆盖)。
         result = await self.client.request('pane.read', {
             'pane_id': pane_id, 'source': 'visible', 'format': 'ansi'})
-        return normalize_snapshot(sanitize_snapshot(result['read']['text']))
+        text = normalize_snapshot(sanitize_snapshot(result['read']['text']))
+        # 目标 pane 只把最后一段助手消息交给判断器;监控 pane 自己的文本保持整屏,
+        # 否则 parse_result 的 baseline/fresh 前缀比较会跨不过截断边界。
+        return trim_snapshot(text) if trim else text
 
     async def _empty(self, pane_id):
         result = await self.client.request('pane.read', {
@@ -146,7 +173,7 @@ class LogicalPaneMonitor:
         for pane_id in targets:
             pane = resolve_selector(panes, pane_id)
             try:
-                content = await self._snapshot(pane_id)
+                content = await self._snapshot(pane_id, trim=True)
             except Exception:
                 self.store.invalidate(pane_id, now, 'cannot read target', self.config.cooldown_seconds)
                 raise
@@ -258,7 +285,8 @@ class LogicalPaneMonitor:
         if not pane or pane['pane_id'] != pane_id or pane_id == self._monitor_id:
             self.store.invalidate(pane_id, now, 'target identity changed')
             return None
-        return self.store.observe(pane_id, pane.get('agent_status') or 'unknown', await self._snapshot(pane_id), now)
+        return self.store.observe(pane_id, pane.get('agent_status') or 'unknown',
+                                  await self._snapshot(pane_id, trim=True), now)
 
     async def _continue(self, decision, now):
         pane_id, digest = decision['pane_id'], decision['content_hash']
