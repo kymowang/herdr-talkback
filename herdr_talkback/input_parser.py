@@ -54,6 +54,15 @@ def inspect_input(
         # be hidden during generation. This is evidence of submission, not residue.
         kind = "submitted" if allow_transformed_residue else "unknown"
         return InputState(kind=kind, text_after_prompt=visible, contains_expected_message=True)
+    if not visible:
+        return InputState(kind="empty", text_after_prompt="")
+    # 占位/ghost 文本必须先于「等于期望消息 → residue」判定：
+    # Claude Code 的空输入框会画 dim 的 ghost 建议（如 continue），而监控发的控制词恰好
+    # 也可能是 continue；若先走相等判定，会把 ghost 当成"我方消息残留在输入框"，
+    # strict 控制发送就会以 "target input is not empty" 被自己拒绝。
+    # 注意：Codex 的 dim 提交回显由上面的 _last_codex_prompt_is_dim 分支先行处理。
+    if _looks_like_placeholder(input_line, visible):
+        return InputState(kind="empty", text_after_prompt=visible)
     if expected_message and visible == expected_message:
         return InputState(
             kind="residue",
@@ -84,11 +93,109 @@ def inspect_input(
             text_after_prompt=visible,
             contains_expected_message=True,
         )
-    if not visible:
-        return InputState(kind="empty", text_after_prompt="")
-    if _looks_like_placeholder(input_line, visible):
-        return InputState(kind="empty", text_after_prompt=visible)
     return InputState(kind="occupied", text_after_prompt=visible)
+
+
+PROMPT_LINE_RE = re.compile(r"^\s*[\u276f\u203a]")
+CHROME_HINTS = (
+    "ctx ", "bypass permissions", "shift+tab", "agents", "esc", "ctrl+p",
+    "commands", "Tip ", "enter/esc", "shortcuts", "f2", "warnings",
+    "Back to bottom", "Goal ", "~/arc", "interrupt", "tokens",
+)
+SEPARATOR_RE = re.compile(r"^[\u2500\u2501\u2550_\-\s]{10,}$")
+
+
+def sanitize_snapshot(ansi_text: str) -> str:
+    """删掉【屏幕底部输入框那一行】,不让占位/ghost 文本冒充用户输入。
+
+    判断器拿到的是剥掉 ANSI 的纯文本,而三种 CLI 的空输入框都会画占位提示:
+    Codex 的 ``Ask Codex to do anything``、Claude 的 dim ``continue``、OpenCode
+    方框里的 ``Ask anything…``。不处理时它们和"用户真敲了一行"完全同形,足以让
+    状态判断误以为还有未提交的用户指令(例如把 dim ``continue`` 读成用户输入)。
+
+    判定为输入框的条件(三条同时满足,避免误删历史里的用户消息回显):
+      1) 该行以 ``❯`` / ``›`` 开头,且是最后一条这样的行;
+      2) 它上面紧邻的是空行或界面 chrome(分隔线 / 状态栏 / 快捷键提示);
+      3) 它下面直到屏幕底部也只剩界面 chrome。
+
+    Codex 生成中会把最后一条用户消息 dim 回显在历史里,那行的上面是助手输出,
+    下面通常还有 ``Working …``,两条都不满足 → 原样保留。
+    """
+    opencode = _inspect_opencode(ansi_text, "")
+    if opencode is not None and opencode.kind in ("empty", "occupied"):
+        # 方框已确认是 OpenCode 的输入框:占位与草稿都不进判断快照(与 Codex/Claude 口径一致)。
+        # kind == "unknown" 说明布局没认准(多余尾行等),保持原样,不冒险删内容。
+        return _sanitize_opencode(ansi_text)
+
+    plain = ANSI_RE.sub("", ansi_text).replace("\r\n", "\n").replace("\r", "\n")
+    lines = plain.split("\n")
+    prompt_index = None
+    for index in range(len(lines) - 1, -1, -1):
+        if PROMPT_LINE_RE.match(lines[index]):
+            prompt_index = index
+            break
+    if prompt_index is None:
+        return ansi_text
+    if prompt_index == 0 or not _is_chrome_line(lines[prompt_index - 1]):
+        return ansi_text
+    if not _only_chrome_after("\n".join(lines[prompt_index + 1:])):
+        return ansi_text
+    del lines[prompt_index]
+    return "\n".join(lines)
+
+
+def _is_chrome_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if SEPARATOR_RE.match(stripped):
+        return True
+    return any(hint in stripped for hint in CHROME_HINTS)
+
+
+def _only_chrome_after(text: str) -> bool:
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped or SEPARATOR_RE.match(stripped):
+            continue
+        if not any(hint in stripped for hint in CHROME_HINTS):
+            return False
+    return True
+
+
+def _sanitize_opencode(ansi_text: str) -> str:
+    """OpenCode 输入在方框内:删掉草稿/占位区,保留 ``Build ·`` 标题行。
+
+    标题行必须保留 —— ``strip_opencode_sidebar`` 依赖它识别方框,删了会让监控
+    自身回复的侧栏裁剪失效。
+    """
+    lines = ansi_text.split("\n")
+    plain = [ANSI_RE.sub("", line) for line in lines]
+    border_index = None
+    border = None
+    for index, line in enumerate(plain):
+        match = re.match(r"^(\s*)\u2579(\u2580{8,})", line)
+        if match:
+            border_index, border = index, match
+    if border_index is None or border_index < 2:
+        return ansi_text
+    left = len(border.group(1))
+    end = left + 1 + len(border.group(2))
+    title_index = border_index - 1
+    if not _cell_slice(plain[title_index], left, end).startswith("\u2503"):
+        return ansi_text
+    draft_indexes = []
+    for index in range(title_index - 1, -1, -1):
+        cells = _cell_slice(plain[index], left, end)
+        if cells.startswith("\u2503"):
+            draft_indexes.append(index)
+        elif not cells.strip():
+            continue
+        else:
+            break
+    if not draft_indexes:
+        return ansi_text
+    return "\n".join(line for index, line in enumerate(lines) if index not in draft_indexes)
 
 
 def _cell_slice(text, start, end):

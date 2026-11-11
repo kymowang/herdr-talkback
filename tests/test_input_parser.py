@@ -1,4 +1,4 @@
-from herdr_talkback.input_parser import InputState, inspect_input
+from herdr_talkback.input_parser import InputState, inspect_input, sanitize_snapshot
 
 
 def test_codex_submission_requires_dim_prompt_and_post_send_verification():
@@ -220,3 +220,69 @@ def test_expected_message_with_extra_text_is_occupied():
     assert state.kind == "occupied"
     assert state.text_after_prompt == "[lead→dev-back] ping plus extra"
     assert state.contains_expected_message is False
+
+
+def _sep(width=40):
+    return "\u2500" * width
+
+
+CLAUDE_GHOST_PROMPT = "\n".join([
+    _sep(),
+    "\u276f\xa0\x1b[0m\x1b[2mcontinue\x1b[0m",
+    _sep(),
+    "  \x1b[2m\x1b[38;2;153;153;153m~/arc (u) | ctx 50% | gpt-6.1-terra\x1b[0m",
+    "  \x1b[38;2;255;107;128m\u23f5\u23f5 bypass permissions on (shift+tab to cycle)\x1b[0m",
+])
+
+CODEX_PLACEHOLDER_PROMPT = "\n".join([
+    "  earlier transcript line",
+    "",
+    "\u203a \x1b[2mAsk Codex to do anything\x1b[0m",
+    "  GPT-6.1 Terra low \xb7 ~/arc \xb7 u \xb7 Main [default]",
+    "  Earlier messages available. enter/esc latest \xb7 ? shortcuts",
+])
+
+
+def test_dim_ghost_prompt_matching_control_word_is_empty_not_residue():
+    # Claude 空输入框画 dim 的 ghost ``continue``;监控的控制词也是 continue。
+    # 顺序错了会把 ghost 当成本方残留(strict 发送被自己拒绝)。
+    assert inspect_input(CLAUDE_GHOST_PROMPT, "continue").kind == "empty"
+    assert inspect_input(CLAUDE_GHOST_PROMPT, "").kind == "empty"
+
+
+def test_sanitize_snapshot_drops_claude_ghost_prompt():
+    out = sanitize_snapshot(CLAUDE_GHOST_PROMPT)
+    assert "continue" not in out
+    assert "bypass permissions" in out
+
+
+def test_sanitize_snapshot_drops_codex_placeholder():
+    out = sanitize_snapshot(CODEX_PLACEHOLDER_PROMPT)
+    assert "Ask Codex to do anything" not in out
+    assert "GPT-6.1" in out
+
+
+def test_sanitize_snapshot_keeps_dim_transcript_echo_before_assistant_output():
+    # Codex 生成中会把最后一条用户消息以 dim 回显在历史里;后面是助手输出 → 不是输入框,保留。
+    text = "\n".join([
+        "earlier assistant text",
+        "",
+        "\u203a \x1b[2mcontinue\x1b[0m",
+        "  assistant is still working on it",
+        "  more output",
+    ])
+    out = sanitize_snapshot(text)
+    assert "continue" in out
+    assert "assistant is still working" in out
+
+
+def test_sanitize_snapshot_drops_idle_composer_draft():
+    # 输入框在屏幕底部、上下都是 chrome → 属于输入框;不进判断快照(输入是否可写由 _empty 单独把关)。
+    text = "\n".join([
+        _sep(),
+        "\u276f \x1b[38;2;248;248;242ma user draft\x1b[0m",
+        _sep(),
+        "  ~/arc (u) | ctx 20% | gpt-6.1-terra",
+    ])
+    out = sanitize_snapshot(text)
+    assert "a user draft" not in out

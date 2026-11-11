@@ -1,6 +1,6 @@
 import pytest
 
-from herdr_talkback.input_parser import inspect_input, strip_opencode_sidebar
+from herdr_talkback.input_parser import inspect_input, sanitize_snapshot, strip_opencode_sidebar
 
 
 def screen(draft='', sidebar='Connect provider /connect'):
@@ -82,3 +82,21 @@ def test_opencode_home_screen_draft_and_overlay_are_not_empty():
     assert inspect_input(home_screen('') + '\nApproval required', '').kind == 'unknown'
     stale = '\x1b[38;2;128;128;128mAsk anything… old placeholder\x1b[0m\n'
     assert inspect_input(stale + home_screen('Ask anything… "Fix a TODO in the codebase"', '255;255;255'), '').kind == 'occupied'
+
+
+def test_sanitize_snapshot_clears_opencode_placeholder_and_keeps_box():
+    out = sanitize_snapshot(home_screen('Ask anything… "Fix a TODO in the codebase"'))
+    assert 'Ask anything' not in out
+    assert 'Sisyphus - Ultraworker' in out
+    assert '╹' in out
+
+
+def test_sanitize_snapshot_clears_opencode_typed_draft():
+    out = sanitize_snapshot(home_screen('continue', '255;255;255'))
+    assert 'continue' not in out
+    assert 'Sisyphus - Ultraworker' in out
+
+
+def test_sanitize_snapshot_leaves_unknown_opencode_layout_untouched():
+    text = home_screen('') + '\nApproval required: choose an option'
+    assert sanitize_snapshot(text) == text

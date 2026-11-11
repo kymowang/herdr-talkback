@@ -4,7 +4,7 @@ import json
 import re
 import time
 
-from .input_parser import inspect_input, strip_opencode_sidebar
+from .input_parser import inspect_input, sanitize_snapshot, strip_opencode_sidebar
 from .logic_state import RESULTS
 
 
@@ -114,9 +114,12 @@ class LogicalPaneMonitor:
         return (await self.client.request('pane.list', {})).get('panes', [])
 
     async def _snapshot(self, pane_id):
+        # 读 ANSI 而不是纯文本:只有 ANSI 才分得出"输入框为空但有 dim 占位提示"
+        # 与"用户真的敲了同样一行"。sanitize_snapshot 把前者换成固定标记,
+        # 避免判断器把 ghost 文本当成待执行的用户输入(Codex/Claude/OpenCode 都覆盖)。
         result = await self.client.request('pane.read', {
-            'pane_id': pane_id, 'source': 'visible', 'format': 'text'})
-        return normalize_snapshot(result['read']['text'])
+            'pane_id': pane_id, 'source': 'visible', 'format': 'ansi'})
+        return normalize_snapshot(sanitize_snapshot(result['read']['text']))
 
     async def _empty(self, pane_id):
         result = await self.client.request('pane.read', {

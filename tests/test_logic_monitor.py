@@ -29,7 +29,8 @@ class Client:
             self.reads.append(dict(params))
             if self.read_hook:
                 self.read_hook(pane, params)
-            return {'read': {'text': self.inputs[pane] if params.get('format') == 'ansi' else self.text[pane]}}
+            return {'read': {'text': (self.text[pane] + '\n\n' + self.inputs[pane])
+                                     if params.get('format') == 'ansi' else self.text[pane]}}
         assert method == 'pane.send_input'
         self.sent.append((pane, params['text']))
         return {}
@@ -254,3 +255,11 @@ def test_unknown_continue_is_not_retried(rig):
         assert len(delivery.sent) == 1
         assert store.attempts()[0]['outcome'] == 'uncertain'
     asyncio.run(scenario())
+
+
+def test_snapshot_reads_ansi_and_strips_ghost_prompt(rig):
+    engine, store, client, delivery, clock = rig
+    client.inputs['p1'] = '\u276f\xa0\x1b[0m\x1b[2mcontinue\x1b[0m'
+    text = asyncio.run(engine._snapshot('p1'))
+    assert 'continue' not in text
+    assert 'Next I can write tests.' in text
