@@ -185,7 +185,7 @@ async def run_service(config, dry_run: bool = False) -> int:
                 peer_adapter.ensure_endpoint(target)
     dispatcher = CoreDispatcher(state, endpoint_registry, adapters)
     if network_enabled:
-        peer_server = PeerServer(config, peer_store, dispatcher)
+        peer_server = PeerServer(config, peer_store, dispatcher, registry=role_registry)
     daemon_router = DaemonMessageRouter(
         config,
         role_registry,

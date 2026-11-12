@@ -983,3 +983,29 @@ class FakeHerdrClient:
 def test_node_command_is_removed():
     with pytest.raises(SystemExit):
         build_parser().parse_args(['node', '--config', 'node.toml'])
+
+
+def test_whoami_cli_registers_remote_and_submits_structured_request(monkeypatch, tmp_path, capsys):
+    async def scenario():
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        cfg = SimpleNamespace(core_node_id='windows', peers={'openclaw': SimpleNamespace(url='https://192.168.90.18:18765')},
+                              aliases={}, socket_path=tmp_path / 'herdr.sock', daemon_socket_path=tmp_path / 'tb.sock')
+        class Client:
+            async def request(self, method, params):
+                assert method == 'pane.list'
+                return {'panes': [{'pane_id': 'p1', 'label': 'monitor'}]}
+        calls = []
+        async def submit(path, payload):
+            calls.append(payload)
+            return {'ok': True, 'message_id': 'msg_new'}
+        monkeypatch.setattr(cli, 'load_config', lambda path: cfg)
+        monkeypatch.setattr(cli, '_load_read_state', lambda path: state)
+        monkeypatch.setattr(cli, 'HerdrClient', lambda path: Client())
+        monkeypatch.setattr(cli, 'submit_daemon_request', submit)
+        args = build_parser().parse_args(['whoami', 'monitor', '192.168.90.18', 'lead'])
+        assert await cli._main_async(args) == 0
+        assert calls[0]['type'] == 'whoami'
+        assert '[whoami]' in calls[0]['message'] and 'openclaw/lead' in calls[0]['message']
+        from herdr_talkback.operator_controls import OperatorStore
+        assert OperatorStore(state).pane('lead') == 'openclaw/lead'
+    asyncio.run(scenario())

@@ -16,18 +16,76 @@ Typical configuration paths, subject to the installation's actual settings:
 
 On PowerShell use `$cfg` in the examples below; on POSIX shells use `"$cfg"`. Keep peer tokens and private keys private.
 
+## Install on a new machine
+
+Requires Herdr 0.9.1+, Python 3.9+, Git, and Python package access. Herdr must be able to find the Python-installed `herdr-talkback` and `herdr-talkback-plugin` entry points on its PATH. Install both the Python package and the GitHub-managed Herdr plugin; Herdr marketplace installation alone does not install Python dependencies:
+
+```text
+python -m pip install "herdr-talkback[network] @ git+https://github.com/kymowang/herdr-talkback.git"
+herdr plugin install kymowang/herdr-talkback
+herdr plugin action invoke herdr-talkback.check
+herdr plugin log list --plugin herdr-talkback
+herdr plugin action invoke herdr-talkback.start
+```
+
+Use `python3` where appropriate. Check the asynchronous check action's logs before starting; run from the intended Herdr session. Remote communication requires the reciprocal peer setup below. A local checkout can instead use `pip install -e '.[network]'` and `herdr plugin link <checkout>`; do not install over an existing linked plugin. To update, update both the Python package and Herdr-managed plugin and restart the service. For an offline-friendly portable bundle, follow its included `INSTALL.md`. Preserve existing configuration, state, and credentials.
+
+## Configure peers before cross-host messaging
+
+Both machines need Talkback network support (`python -m pip install -e '.[network]'` for an editable checkout), distinct existing `core.node_id` values, network listeners, and reciprocal `[peers.<node_id>]` entries. Do not change an established node ID without considering its persisted messages. A pane registration or identity card does not configure trust.
+
+On each machine, generate a certificate for the IP or hostname the other machine will connect to. Choose the actual config directory and reachable address; never use `--force` unless explicitly authorized to replace existing credentials:
+
+```text
+herdr-talkback peer init-tls --directory <plugin-config-dir>/tls --host <this-machine-ip-or-hostname>
+```
+
+This creates `node.crt`, `node.key`, and `pair.token`. Keep each machine's private key on that machine. Exchange the public certificates, and securely distribute the same token to both machines; never expose tokens or private keys in chat, logs, identity cards, or Git. If both machines generated tokens, select one token for that peer pair and securely copy it to the peer's token file. A certificate must include the exact IP/hostname used in the peer URL.
+
+Example in the first machine's existing plugin `config.toml`; merge with existing TOML sections rather than duplicating them:
+
+```toml
+[core]
+node_id = "linux-main"
+
+[network]
+enabled = true
+listen_host = "192.168.60.55"
+listen_port = 18765
+cert_file = "tls/node.crt"
+key_file = "tls/node.key"
+
+[peers.openclaw]
+url = "https://192.168.90.18:18765"
+ca_file = "tls/openclaw.crt"
+token_file = "tls/pair.token"
+```
+
+On the other machine use `node_id = "openclaw"`, its own listener and certificate/key, and `[peers.linux-main]` with the first machine's HTTPS URL, public certificate and matching token. Paths are relative to the config file. The default listener port is 18765; allow each configured TCP port through the appropriate firewall. Run the plugin `check`, restart the correct Talkback service to load configuration, then check in both directions:
+
+```text
+herdr-talkback --config $cfg peers list
+herdr-talkback --config $cfg peers check openclaw
+```
+
+Use the actual remote node ID on each side. A successful peer check verifies connectivity and authentication, not delivery to a particular pane. If the network dependencies are absent or a check fails, report the actual error and check configuration, certificate hostname, port and firewall. Do not expose credentials during diagnosis.
+
 ## Find and register panes
 
 ```text
 herdr-talkback --config $cfg pane list
 herdr-talkback --config $cfg peers list
 herdr-talkback --config $cfg pane registered --json
+herdr-talkback --config $cfg pane register-all
+herdr-talkback --config $cfg whoami monitor 192.168.90.18 lead
+herdr-talkback --config $cfg pane identity monitor --url https://192.168.60.55:18765
+herdr-talkback --config $cfg pane import '<identity-json>'
 herdr-talkback --config $cfg pane register local_dev linux-main/ast-dev1
 herdr-talkback --config $cfg pane register remote_lead openclaw/lead
 herdr-talkback --config $cfg pane unregister remote_lead
 ```
 
-The addresses above are examples: use the actual local `core.node_id`, configured peer node ID, and pane name. Registrations are per machine and Herdr session; they do not synchronize to peers. Registered names cannot conflict with a local pane or configured alias. A remote node must already be configured as a peer with HTTPS, certificates and token; registration does not configure authentication. `pane registered` identifies local/remote and shows the configured peer URL. A local `node/pane` uses the local Herdr socket, not an IP connection. Do not infer a global host from `127.0.0.1`.
+The `register-all`, `whoami`, `identity`, and `import` commands require a Talkback version that supports them; check `herdr-talkback pane --help` and `herdr-talkback --help` before use, and ensure both peers support `whoami`. The addresses above are examples: use the actual local `core.node_id`, configured peer node ID, and pane name. Registrations are per machine and Herdr session; whoami explicitly introduces the sender to the remote peer, but other registrations do not automatically synchronize. A local pane may be registered under its own name; other local names and configured aliases cannot conflict. Whoami registers the target locally and introduces the authenticated sender to the remote Talkback; check message status to confirm delivery. Identity cards contain no credentials and require a reachable HTTPS URL. A remote node must already be configured as a peer with HTTPS, certificates and token; registration does not configure authentication. `pane registered` identifies local/remote and shows the configured peer URL. A local `node/pane` uses the local Herdr socket, not an IP connection. Do not infer a global host from `127.0.0.1`.
 
 ## Send and verify
 

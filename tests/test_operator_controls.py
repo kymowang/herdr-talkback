@@ -217,3 +217,50 @@ def test_monitor_cli_controls_real_local_daemon(tmp_path):
             await asyncio.gather(task, return_exceptions=True)
             await controller.close()
     asyncio.run(scenario())
+
+
+def test_bulk_local_registration_is_idempotent_and_reports_conflicts(tmp_path):
+    from herdr_talkback.operator_controls import register_local_panes
+    state = TalkbackState(tmp_path / 'state.db'); state.init()
+    store = OperatorStore(state)
+    cfg = SimpleNamespace(core_node_id='windows', peers={'openclaw': object()}, aliases={})
+    store.register_pane('lead', 'openclaw/lead', cfg)
+    panes = [{'pane_id': 'p1', 'label': 'worker'}, {'pane_id': 'p2', 'label': None},
+             {'pane_id': 'p3', 'label': 'lead'}]
+    first = register_local_panes(store, cfg, panes)
+    second = register_local_panes(store, cfg, panes)
+    assert store.pane('worker') == 'windows/worker'
+    assert [r['status'] for r in first] == ['registered', 'unnamed', 'conflict']
+    assert second[0]['status'] == 'existing'
+
+
+def test_identity_card_validates_peer_and_never_includes_credentials(tmp_path):
+    from herdr_talkback.operator_controls import make_identity_card, import_identity_card
+    state = TalkbackState(tmp_path / 'state.db'); state.init()
+    store = OperatorStore(state)
+    sender = SimpleNamespace(core_node_id='windows', network=SimpleNamespace(listen_host='192.168.1.2', listen_port=18765))
+    peer = SimpleNamespace(url='https://192.168.1.2:18765', token_file='secret')
+    receiver = SimpleNamespace(core_node_id='linux', peers={'windows': peer}, aliases={})
+    card = make_identity_card(sender, 'worker')
+    assert 'secret' not in json.dumps(card)
+    assert import_identity_card(store, receiver, card, set()) == 'registered'
+    assert store.pane('worker') == 'windows/worker'
+    assert import_identity_card(store, receiver, card, set()) == 'existing'
+    with pytest.raises(ValueError):
+        import_identity_card(store, receiver, dict(card, url='https://other:18765'), set())
+
+
+def test_self_registered_local_pane_keeps_local_routing(tmp_path):
+    async def scenario():
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        store = OperatorStore(state)
+        cfg = SimpleNamespace(core_node_id='windows', peers={}, roles=(), aliases={}, message_rules=())
+        store.register_pane('worker', 'windows/worker', cfg)
+        class Registry:
+            async def refresh(self): pass
+            def snapshot(self): return {'worker': object()}
+            def resolve_pane(self, role): return 'p1'
+        router = DaemonMessageRouter(cfg, Registry(), None, state=state, operator_store=store)
+        result = await router.handle({'type': 'send', 'message': '[sender->worker] hello', 'dry_run': True})
+        assert result['ok'] and result['target_endpoint'] == 'windows/worker'
+    asyncio.run(scenario())

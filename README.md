@@ -4,6 +4,21 @@ Herdr 原生插件：在有角色名称的 agent pane 之间可靠转发消息�
 
 ## 安装和运行
 
+### Herdr 插件市场安装
+
+先确保 Python 3.9+、Git 和 Herdr 0.9.1+ 可用，并使安装 Python 命令的目录出现在 Herdr 的 PATH 中。插件市场安装不会自动安装 Python 依赖；在启动服务前执行：
+
+```bash
+python -m pip install "herdr-talkback[network] @ git+https://github.com/kymowang/herdr-talkback.git"
+herdr plugin install kymowang/herdr-talkback
+herdr plugin action invoke herdr-talkback.check
+herdr plugin log list --plugin herdr-talkback
+herdr plugin action invoke herdr-talkback.start
+```
+
+Linux/macOS 上可能需要用 `python3` 代替 `python`。检查日志确认配置及连接成功；远程通信还需双方配置 peer。更新时同时更新 Python 包和 Herdr 插件，并重启服务；已链接的本地插件需先解除链接。
+
+
 支持 Windows、Linux 和 macOS，需要 Python 3.9+、Herdr 0.9.1+。Python 3.9/3.10 还需要 `tomli`，通过安装本项目自动安装。
 
 也可以生成包含 Talkback、Herdr 插件清单和 Codex skill 的跨平台安装包：
@@ -236,6 +251,18 @@ herdr-talkback --config "$CFG" pane unregister remote_lead
 数据库中，不会自动同步到另一台机器。远端节点必须先在配置中设置；登记时要求能
 连接本地 Herdr，并拒绝与现有本机 pane 或配置别名冲突的名称。登记名称用于普通队列
 投递，不支持 `--direct`。
+
+### 批量登记、whoami 和人工转发
+
+```bash
+herdr-talkback --config "$CFG" pane register-all
+herdr-talkback --config "$CFG" whoami monitor 192.168.90.18 lead
+herdr-talkback --config "$CFG" pane identity monitor --url https://192.168.60.55:18765
+# 把上一条输出的 JSON 转发给对方，对方执行：
+herdr-talkback --config "$CFG" pane import '<identity-json>'
+```
+
+`register-all` 按项报告未命名或冲突的 Pane，不覆盖已有登记。`whoami` 在发送端登记目标，接收端认证发送节点后登记发送方并投递消息。查询返回的消息 ID 以确认最终状态。双方都需要新版 Talkback 及已配置的可信 peer。如果监听地址为通配地址，`identity` 需用 `--url` 指定对端可访问的 HTTPS 地址及端口。身份卡不包含凭据，也不自动创建 peer。
 
 ## 开发验证
 

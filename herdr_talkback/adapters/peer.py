@@ -49,6 +49,9 @@ class PeerAdapter:
                 if need_info:
                     info = await client.request('GET', '/v1/info')
                     self.store.pin_instance(peer_id, info['instance_id'])
+                    if message.metadata.get('talkback_whoami') == 1 and 'whoami_registration' not in info.get('capabilities', []):
+                        return AdapterDeliveryResult(AdapterDeliveryState.FAILED,
+                            'remote Talkback does not support whoami registration', attempt)
                     expected_instance = info['instance_id']
                     need_info = False
                 if progress['remote_received_at']:

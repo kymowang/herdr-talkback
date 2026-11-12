@@ -2,6 +2,8 @@
 import asyncio
 import sqlite3
 from contextlib import closing
+from collections import Counter
+from urllib.parse import urlsplit
 
 from .addressing import EndpointAddress, parse_endpoint_address
 
@@ -77,6 +79,69 @@ class OperatorStore:
     def remove_pane(self, name):
         with self.state._connect() as db:
             return db.execute('delete from registered_panes where name=?', (name,)).rowcount > 0
+
+
+def register_local_panes(store, config, panes):
+    counts = Counter(p.get('label') for p in panes if p.get('label'))
+    result = []
+    for pane in panes:
+        name = pane.get('label')
+        row = {'pane_id': pane['pane_id'], 'name': name}
+        if not name:
+            row['status'] = 'unnamed'
+        elif counts[name] != 1 or name in config.aliases:
+            row['status'] = 'conflict'
+        else:
+            address = config.core_node_id + '/' + name
+            existing = store.pane(name)
+            if existing == address:
+                row['status'] = 'existing'
+            elif existing:
+                row['status'] = 'conflict'
+            else:
+                try:
+                    store.register_pane(name, address, config)
+                    row['status'] = 'registered'
+                except ValueError:
+                    row['status'] = 'invalid'
+        result.append(row)
+    return result
+
+
+def make_identity_card(config, pane, url=None):
+    endpoint = parse_endpoint_address(config.core_node_id + '/' + pane)
+    if url is None and config.network.listen_host not in ('0.0.0.0', '::', '127.0.0.1', 'localhost'):
+        host = config.network.listen_host
+        if ':' in host:
+            host = '[' + host + ']'
+        url = 'https://{}:{}'.format(host, config.network.listen_port)
+    if url is None:
+        raise ValueError('set --url to the externally reachable HTTPS origin and port')
+    if url is not None:
+        parsed = urlsplit(url)
+        if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or parsed.path not in ('', '/') or parsed.query or parsed.fragment:
+            raise ValueError('identity URL must be an HTTPS origin')
+        _ = parsed.port
+        url = url.rstrip('/')
+    return {'version': 1, 'node': endpoint.node_id, 'pane': endpoint.endpoint_id, 'url': url}
+
+
+def import_identity_card(store, config, card, local_names):
+    if not isinstance(card, dict) or set(card) != {'version', 'node', 'pane', 'url'} or type(card['version']) is not int or card['version'] != 1 or not all(isinstance(card[key], str) and card[key] for key in ('node', 'pane', 'url')):
+        raise ValueError('invalid identity card')
+    endpoint = parse_endpoint_address(str(card['node']) + '/' + str(card['pane']))
+    if endpoint.node_id not in config.peers:
+        raise ValueError('identity node must be a configured peer')
+    if card['url'] and card['url'].rstrip('/') != config.peers[endpoint.node_id].url.rstrip('/'):
+        raise ValueError('identity URL differs from configured peer')
+    name = endpoint.endpoint_id
+    if name in local_names or name in config.aliases:
+        raise ValueError('pane name conflicts with a local pane or alias')
+    existing = store.pane(name)
+    if existing == endpoint.qualified:
+        return 'existing'
+    store.register_pane(name, endpoint.qualified, config)
+    return 'registered'
 
 
 class MonitorController:
