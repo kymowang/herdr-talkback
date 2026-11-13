@@ -7,6 +7,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import socket
+import hashlib
+import re
 
 from .config import load_config, default_config_path, default_state_path
 from .platform_support import ServiceAlreadyRunning, service_lock
@@ -21,10 +24,15 @@ def initialize():
     path.parent.mkdir(parents=True, exist_ok=True)
     state_root = Path(os.environ.get('HERDR_PLUGIN_STATE_DIR', default_state_path().parent))
     template = Path(__file__).with_name('default-rules.toml').read_text(encoding='utf-8')
+    hostname = socket.gethostname()
+    node_id = re.sub(r'[^A-Za-z0-9._-]+', '-', hostname).strip('._-')
+    if not node_id:
+        node_id = 'host-' + hashlib.sha256(hostname.encode('utf-8')).hexdigest()[:12]
     # The Herdr socket identifies a session, so multiple sessions never share queues/locks.
     prefix = ('# Generated once; changes are never overwritten.\nroles = []\n'
               'state_path = ' + json.dumps(str(state_root / '{session}' / 'state.db')) + '\n'
-              'daemon_socket_path = ' + json.dumps(str(state_root / '{session}' / 'talkback.sock')) + '\n\n')
+              'daemon_socket_path = ' + json.dumps(str(state_root / '{session}' / 'talkback.sock')) + '\n\n'
+              '[core]\nnode_id = ' + json.dumps(node_id) + '\n\n')
     try:
         with path.open('x', encoding='utf-8') as f:
             f.write(prefix + template)

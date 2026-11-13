@@ -32,6 +32,8 @@ Use `python3` where appropriate. Check the asynchronous check action's logs befo
 
 ## Configure peers before cross-host messaging
 
+When preparing configuration information for another machine to connect to this Talkback node, run `herdr-talkback pane identity <local-pane>` in the current Herdr session and provide the resulting identity card to the other operator. It supplies the node ID, pane, reachable HTTPS URL, local public-certificate path, and per-peer token file paths for cross-host configuration. The paths refer to files on the issuing machine; the recipient cannot use them as local paths. Exchange the public certificate and the token selected for that peer separately through a trusted channel, then configure the corresponding `[peers.<node_id>]` entry and verify connectivity. Never transfer the private key or disclose token contents in chat. Identity does not create peer trust; when the listener is wildcard or loopback, supply `--url` for the reachable HTTPS origin, and use `--config` if plugin configuration discovery is unavailable. Check command availability on older installations.
+
 Both machines need Talkback network support (`python -m pip install -e '.[network]'` for an editable checkout), distinct existing `core.node_id` values, network listeners, and reciprocal `[peers.<node_id>]` entries. Do not change an established node ID without considering its persisted messages. A pane registration or identity card does not configure trust.
 
 On each machine, generate a certificate for the IP or hostname the other machine will connect to. Choose the actual config directory and reachable address; never use `--force` unless explicitly authorized to replace existing credentials:
@@ -78,14 +80,14 @@ herdr-talkback --config $cfg peers list
 herdr-talkback --config $cfg pane registered --json
 herdr-talkback --config $cfg pane register-all
 herdr-talkback --config $cfg whoami monitor 192.168.90.18 lead
-herdr-talkback --config $cfg pane identity monitor --url https://192.168.60.55:18765
+herdr-talkback pane identity monitor
 herdr-talkback --config $cfg pane import '<identity-json>'
 herdr-talkback --config $cfg pane register local_dev linux-main/ast-dev1
 herdr-talkback --config $cfg pane register remote_lead openclaw/lead
 herdr-talkback --config $cfg pane unregister remote_lead
 ```
 
-The `register-all`, `whoami`, `identity`, and `import` commands require a Talkback version that supports them; check `herdr-talkback pane --help` and `herdr-talkback --help` before use, and ensure both peers support `whoami`. The addresses above are examples: use the actual local `core.node_id`, configured peer node ID, and pane name. Registrations are per machine and Herdr session; whoami explicitly introduces the sender to the remote peer, but other registrations do not automatically synchronize. A local pane may be registered under its own name; other local names and configured aliases cannot conflict. Whoami registers the target locally and introduces the authenticated sender to the remote Talkback; check message status to confirm delivery. Identity cards contain no credentials and require a reachable HTTPS URL. A remote node must already be configured as a peer with HTTPS, certificates and token; registration does not configure authentication. `pane registered` identifies local/remote and shows the configured peer URL. A local `node/pane` uses the local Herdr socket, not an IP connection. Do not infer a global host from `127.0.0.1`.
+The `register-all`, `whoami`, `identity`, and `import` commands require a Talkback version that supports them; check `herdr-talkback pane --help` and `herdr-talkback --help` before use, and ensure both peers support `whoami`. The addresses above are examples: use the actual local `core.node_id`, configured peer node ID, and pane name. Registrations are per machine and Herdr session; whoami explicitly introduces the sender to the remote peer, but other registrations do not automatically synchronize. A local pane may be registered under its own name; other local names and configured aliases cannot conflict. Whoami registers the target locally and introduces the authenticated sender to the remote Talkback; check message status to confirm delivery. Identity auto-discovers the active plugin configuration and uses its concrete listen address and port. For wildcard or loopback listeners, specify a reachable HTTPS origin with --url; --config overrides discovery. Identity cards list the local certificate path and per-peer token file paths, never their contents; these paths are on the sender and do not transfer the files. A newly generated plugin configuration uses the machine hostname for node ID; existing configurations are not renamed. Identity cards contain no credentials. A remote node must already be configured as a peer with HTTPS, certificates and token; registration does not configure authentication. `pane registered` identifies local/remote and shows the configured peer URL. A local `node/pane` uses the local Herdr socket, not an IP connection. Do not infer a global host from `127.0.0.1`.
 
 ## Send and verify
 

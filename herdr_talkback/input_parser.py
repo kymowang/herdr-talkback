@@ -256,6 +256,10 @@ def _is_expected_paste_block_residue(visible: str, expected_message: str) -> boo
 
 
 def _is_expected_soft_wrapped_residue(segment: str, expected_message: str) -> bool:
+    # Terminal rendering can omit zero-width spaces that remain in the sent text.
+    # Limit this normalization to post-send transformed-residue comparison.
+    segment = segment.replace('\u200b', '')
+    expected_message = expected_message.replace('\u200b', '')
     expected = _normalize_visible(expected_message)
     first_line = _normalize_visible(_first_line(segment))
     rendered = _normalize_visible(segment)

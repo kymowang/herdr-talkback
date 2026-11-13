@@ -1009,3 +1009,29 @@ def test_whoami_cli_registers_remote_and_submits_structured_request(monkeypatch,
         from herdr_talkback.operator_controls import OperatorStore
         assert OperatorStore(state).pane('lead') == 'openclaw/lead'
     asyncio.run(scenario())
+
+
+def test_identity_discovers_active_plugin_config_when_not_explicit(monkeypatch, tmp_path):
+    config = tmp_path / 'plugin.toml'
+    captured = []
+    monkeypatch.setattr(cli, '_discover_plugin_config', lambda: config)
+    async def run(args):
+        captured.append(args.config)
+        return 0
+    monkeypatch.setattr(cli, '_main_async', run)
+    assert cli.main(['pane', 'identity', 'monitor']) == 0
+    assert captured == [config]
+
+
+def test_identity_respects_explicit_config(monkeypatch, tmp_path):
+    selected = tmp_path / 'explicit.toml'
+    captured = []
+    def unexpected_discovery():
+        raise AssertionError('explicit config must win')
+    monkeypatch.setattr(cli, '_discover_plugin_config', unexpected_discovery)
+    async def run(args):
+        captured.append(args.config)
+        return 0
+    monkeypatch.setattr(cli, '_main_async', run)
+    assert cli.main(['--config', str(selected), 'pane', 'identity', 'monitor']) == 0
+    assert captured == [selected]

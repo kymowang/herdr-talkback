@@ -123,11 +123,22 @@ def make_identity_card(config, pane, url=None):
             raise ValueError('identity URL must be an HTTPS origin')
         _ = parsed.port
         url = url.rstrip('/')
-    return {'version': 1, 'node': endpoint.node_id, 'pane': endpoint.endpoint_id, 'url': url}
+    certificate = getattr(config.network, 'cert_file', None)
+    token_files = {name: str(peer.token_file) for name, peer in sorted(getattr(config, 'peers', {}).items())
+                   if getattr(peer, 'token_file', None)}
+    if not token_files and certificate is not None:
+        candidate = certificate.parent / 'pair.token'
+        if candidate.is_file():
+            token_files['unassigned'] = str(candidate)
+    return {'version': 1, 'node': endpoint.node_id, 'pane': endpoint.endpoint_id, 'url': url,
+            'certificate_file': str(certificate) if certificate is not None else None,
+            'token_files': token_files}
 
 
 def import_identity_card(store, config, card, local_names):
-    if not isinstance(card, dict) or set(card) != {'version', 'node', 'pane', 'url'} or type(card['version']) is not int or card['version'] != 1 or not all(isinstance(card[key], str) and card[key] for key in ('node', 'pane', 'url')):
+    required = {'version', 'node', 'pane', 'url'}
+    optional = {'certificate_file', 'token_files'}
+    if not isinstance(card, dict) or not required <= set(card) or set(card) - required - optional or type(card['version']) is not int or card['version'] != 1 or not all(isinstance(card[key], str) and card[key] for key in ('node', 'pane', 'url')):
         raise ValueError('invalid identity card')
     endpoint = parse_endpoint_address(str(card['node']) + '/' + str(card['pane']))
     if endpoint.node_id not in config.peers:

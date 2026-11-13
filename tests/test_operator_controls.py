@@ -264,3 +264,25 @@ def test_self_registered_local_pane_keeps_local_routing(tmp_path):
         result = await router.handle({'type': 'send', 'message': '[sender->worker] hello', 'dry_run': True})
         assert result['ok'] and result['target_endpoint'] == 'windows/worker'
     asyncio.run(scenario())
+
+
+def test_identity_card_includes_paths_but_not_credentials(tmp_path):
+    from herdr_talkback.operator_controls import make_identity_card, import_identity_card
+    certificate = tmp_path / 'node.crt'; certificate.write_text('CERT')
+    token = tmp_path / 'pair.token'; token.write_text('SUPER_SECRET_TOKEN')
+    sender = SimpleNamespace(core_node_id='pc55', network=SimpleNamespace(listen_host='192.168.1.2', listen_port=18765, cert_file=certificate), peers={'remote': SimpleNamespace(token_file=token)})
+    card = make_identity_card(sender, 'worker')
+    assert card['certificate_file'] == str(certificate)
+    assert card['token_files'] == {'remote': str(token)}
+    assert 'SUPER_SECRET_TOKEN' not in json.dumps(card)
+    state = TalkbackState(tmp_path / 'state.db'); state.init()
+    receiver = SimpleNamespace(core_node_id='remote', peers={'pc55': SimpleNamespace(url=card['url'])}, aliases={})
+    assert import_identity_card(OperatorStore(state), receiver, card, set()) == 'registered'
+
+
+def test_identity_import_accepts_original_version_one_card(tmp_path):
+    from herdr_talkback.operator_controls import OperatorStore, import_identity_card
+    state = TalkbackState(tmp_path / 'state.db'); state.init()
+    config = SimpleNamespace(core_node_id='local', peers={'remote': SimpleNamespace(url='https://192.0.2.1:18765')}, aliases={})
+    card = {'version': 1, 'node': 'remote', 'pane': 'worker', 'url': 'https://192.0.2.1:18765'}
+    assert import_identity_card(OperatorStore(state), config, card, set()) == 'registered'

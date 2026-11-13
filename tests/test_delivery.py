@@ -883,3 +883,19 @@ def test_delayed_check_does_not_submit_different_input(tmp_path):
         assert not any(method == 'pane.send_input' and params['text'] == ''
                        for method, params in client.requests)
     asyncio.run(scenario())
+
+
+def test_delivery_submits_wrapped_residue_when_zero_width_space_is_not_rendered(tmp_path):
+    async def scenario():
+        message_text = '[lead->dev-back] dependency sc2+A\u200bAD/cacheFixedSalt requires verification and a regression test'
+        visible = ('\u203a [lead->dev-back] dependency sc2+AAD/cacheFixedSalt requires\n'
+                   '  verification and a regression test\n  tab to queue message')
+        client = FakeClient([EMPTY_PROMPT, visible, EMPTY_PROMPT])
+        sleeper = FakeSleeper()
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, sleep=sleeper.sleep,
+                                       post_send_check_seconds=5).deliver(parse_message(message_text, ROLES, ALIASES))
+        assert result.delivered and result.reason == 'residue flushed'
+        assert sleeper.delays == [5]
+        assert client.requests.count(('pane.send_input', {'pane_id': 'p-back', 'text': '', 'keys': ['enter']})) == 1
+    asyncio.run(scenario())

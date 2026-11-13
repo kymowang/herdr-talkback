@@ -257,12 +257,12 @@ herdr-talkback --config "$CFG" pane unregister remote_lead
 ```bash
 herdr-talkback --config "$CFG" pane register-all
 herdr-talkback --config "$CFG" whoami monitor 192.168.90.18 lead
-herdr-talkback --config "$CFG" pane identity monitor --url https://192.168.60.55:18765
+herdr-talkback pane identity monitor
 # 把上一条输出的 JSON 转发给对方，对方执行：
 herdr-talkback --config "$CFG" pane import '<identity-json>'
 ```
 
-`register-all` 按项报告未命名或冲突的 Pane，不覆盖已有登记。`whoami` 在发送端登记目标，接收端认证发送节点后登记发送方并投递消息。查询返回的消息 ID 以确认最终状态。双方都需要新版 Talkback 及已配置的可信 peer。如果监听地址为通配地址，`identity` 需用 `--url` 指定对端可访问的 HTTPS 地址及端口。身份卡不包含凭据，也不自动创建 peer。
+`register-all` 按项报告未命名或冲突的 Pane，不覆盖已有登记。`whoami` 在发送端登记目标，接收端认证发送节点后登记发送方并投递消息。查询返回的消息 ID 以确认最终状态。双方都需要新版 Talkback 及已配置的可信 peer。`identity` 自动查找当前 Herdr 插件配置，并使用其明确的监听地址和端口；监听地址是通配地址或仅本机可访问时，用 `--url` 显式指定可访问的 HTTPS 地址。身份卡不包含凭据，也不自动创建 peer。身份卡返回本机公开证书路径和按 peer 区分的 token 路径，路径只在发送机器上有意义；需要另行通过可信方式交换文件。首次生成插件配置时使用本机 hostname 作为节点 ID；既有配置不会自动改名。
 
 ## 开发验证
 

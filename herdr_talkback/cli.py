@@ -146,6 +146,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             parser.error('monitor requires status, state, enable, or disable')
         if args.config is None:
             args.config = _discover_plugin_config()
+    elif args.command == 'pane' and args.pane_command == 'identity' and args.config is None:
+        args.config = _discover_plugin_config()
     try:
         return asyncio.run(_main_async(args))
     except KeyboardInterrupt:

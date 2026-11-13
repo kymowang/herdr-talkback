@@ -220,3 +220,18 @@ def test_expected_message_with_extra_text_is_occupied():
     assert state.kind == "occupied"
     assert state.text_after_prompt == "[lead→dev-back] ping plus extra"
     assert state.contains_expected_message is False
+
+
+def test_wrapped_message_with_invisible_zero_width_space_matches_after_send():
+    expected = '[sender->target] dependency sc2+A\u200bAD/cacheFixedSalt requires verification and a regression test'
+    screen = ('\u203a [sender->target] dependency sc2+AAD/cacheFixedSalt requires\n'
+              '  verification and a regression test\n  tab to queue message')
+    assert inspect_input(screen, expected, allow_transformed_residue=True).kind == 'residue'
+    assert inspect_input(screen, expected).kind == 'occupied'
+
+
+def test_wrapped_message_with_different_visible_text_is_not_residue():
+    expected = '[sender->target] dependency sc2+A\u200bAD/cacheFixedSalt requires verification and a regression test'
+    screen = ('\u203a [sender->target] dependency sc2+AAD/cacheFixedSalt requires\n'
+              '  verification and a different regression test\n  tab to queue message')
+    assert inspect_input(screen, expected, allow_transformed_residue=True).kind == 'occupied'
