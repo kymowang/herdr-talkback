@@ -235,3 +235,22 @@ def test_wrapped_message_with_different_visible_text_is_not_residue():
     screen = ('\u203a [sender->target] dependency sc2+AAD/cacheFixedSalt requires\n'
               '  verification and a different regression test\n  tab to queue message')
     assert inspect_input(screen, expected, allow_transformed_residue=True).kind == 'occupied'
+
+
+def test_codex_collapsed_paste_is_residue_only_after_sending():
+    message = '[lead->dev-back] ' + 'long task text ' * 100
+    screen = '\u203a [Pasted Content 1099 chars]remaining text\n  tab to queue message'
+    assert inspect_input(screen, message).kind == 'occupied'
+    assert inspect_input(screen, message, allow_transformed_residue=True).kind == 'residue'
+
+
+def test_dim_codex_collapsed_history_is_not_composer_residue():
+    message = '[lead->dev-back] ' + 'long task text ' * 100
+    screen = '\x1b[2m\u203a [Pasted Content 1099 chars]\x1b[0m'
+    assert inspect_input(screen, message, allow_transformed_residue=True).kind != 'residue'
+
+
+def test_codex_collapsed_paste_on_wrapped_composer_line_is_recognized():
+    screen = '\u203a a visible prefix\n  [Pasted Content 1099 chars]remaining text\n  tab to queue message'
+    assert inspect_input(screen, 'message', allow_transformed_residue=True).kind == 'residue'
+    assert inspect_input(screen, 'message').kind == 'occupied'

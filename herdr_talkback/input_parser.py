@@ -11,6 +11,7 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
 RGB_RE = re.compile(r"\x1b\[38;2;(\d+);(\d+);(\d+)m")
 PASTE_BLOCK_RE = re.compile(r"^\[Pasted text #\d+(?: \+\d+ lines)?\]$")
+CODEX_PASTE_BLOCK_RE = re.compile(r"\[Pasted Content [1-9]\d* chars\]")
 IMAGE_PLACEHOLDER_RE = re.compile(r"\[Image #\d+\]\s*")
 PROMPT_MARKERS = ("❯", "›")
 PLACEHOLDER_TEXT = (
@@ -46,6 +47,13 @@ def inspect_input(
 
     input_line = _first_line(segment)
     visible = _strip_ansi(input_line).strip()
+    if CODEX_PASTE_BLOCK_RE.search(_strip_ansi(segment)) and ansi_text.rfind('›') > ansi_text.rfind('❯'):
+        # Dim Codex prompts are transcript history, not the active composer.
+        if _last_codex_prompt_is_dim(ansi_text):
+            return InputState(kind='unknown', text_after_prompt=visible)
+        if allow_transformed_residue and expected_message:
+            return InputState(kind='residue', text_after_prompt=visible, contains_expected_message=True)
+        return InputState(kind='occupied', text_after_prompt=visible)
     if (
         expected_message and _last_codex_prompt_is_dim(ansi_text)
         and (visible == expected_message or _is_expected_soft_wrapped_residue(segment, expected_message))

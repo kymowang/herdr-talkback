@@ -102,7 +102,7 @@ herdr-talkback --config $cfg send '[ast-dev3→openclaw/lead] 回执内容'
 herdr-talkback --config $cfg message status msg_实际消息ID --json
 ```
 
-Use `send --dry-run` to check routing without sending. `queued` and `accepted` do not prove delivery: query the returned message ID and report its actual state. `delivered` is the final delivery receipt; `waiting_endpoint` means the target is unavailable or unregistered; `failed` or `delivery_unknown` requires inspection before retrying, because the message may already be in or submitted to a pane. Do not submit, clear or replace an occupied input box without the user's instruction. Registered aliases require daemon delivery; do not use `--direct` with them.
+Use `send --dry-run` to check routing without sending. `queued` and `accepted` do not prove delivery: query the returned message ID and report its actual state. `delivered` is the final delivery receipt; `waiting_endpoint` means the target is unavailable or unregistered; `failed` or `delivery_unknown` requires inspection before retrying, because the message may already be in or submitted to a pane. The configured unattended delivery fallback may submit an occupied input from any source after the entire visible screen is unchanged for `[delivery].stale_input_seconds` (default 300 seconds) while a message is waiting. Set it to 0 to disable the fallback. It checks again before Enter, restarts timing on screen changes or service restart, skips folded drafts and unrecognized inputs, and continues pending delivery only after the input clears. Cross-host fallback runs on the receiving host. Do not manually submit a draft without user instruction. Registered aliases require daemon delivery; do not use `--direct` with them.
 
 ## Logical monitoring
 

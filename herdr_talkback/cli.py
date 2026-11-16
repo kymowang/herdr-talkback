@@ -619,6 +619,7 @@ async def _main_async(args) -> int:
             retry_interval_seconds=cfg.delivery_retry_interval_seconds,
             notifier=notifier,
             verify_timeout_ms=getattr(cfg, "delivery_verify_timeout_ms", 0),
+            stale_input_seconds=getattr(cfg, 'delivery_stale_input_seconds', 300),
         )
         result = await delivery.deliver(message)
         print(
