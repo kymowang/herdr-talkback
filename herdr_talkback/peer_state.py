@@ -87,7 +87,7 @@ class PeerStore:
             db.execute("insert or ignore into peer_meta values ('instance_id', ?)", (uuid.uuid4().hex,))
             self.instance_id = db.execute("select value from peer_meta where key='instance_id'").fetchone()[0]
 
-    def receive(self, peer, envelope, capacity=10000):
+    def receive(self, peer, envelope, capacity=10000, *, registration_config=None, local_names=()):
         source, target = validate_envelope(peer, self.state.local_node_id, envelope)
         digest = hashlib.sha256(json.dumps(envelope, sort_keys=True, ensure_ascii=True,
                                           separators=(',', ':')).encode('utf-8')).hexdigest()
@@ -102,6 +102,16 @@ class PeerStore:
             if (db.execute('select 1 from messages where message_id=?', (message_id,)).fetchone()
                     or db.execute('select 1 from message_archive where message_id=?', (message_id,)).fetchone()):
                 raise PeerConflict('message identity already belongs to another delivery')
+            if envelope['metadata'].get('talkback_whoami') == 1:
+                if registration_config is None or peer not in registration_config.peers:
+                    raise ValueError('whoami registration is unavailable')
+                name = source.endpoint_id
+                if name in local_names or name in registration_config.aliases:
+                    raise ValueError('whoami name conflicts with a local pane or alias')
+                existing = db.execute('select address from registered_panes where name=?', (name,)).fetchone()
+                if existing and existing[0] != source.qualified:
+                    raise ValueError('whoami name already registered to another pane')
+                db.execute('insert or ignore into registered_panes values (?,?)', (name, source.qualified))
             count = db.execute("select count(*) from peer_receipts where peer=? and state not in ('delivered','failed','delivery_unknown')", (peer,)).fetchone()[0]
             if count >= capacity:
                 raise PeerCapacity('inbound peer queue is full')

@@ -5,6 +5,8 @@ roles = []
 max_attempts = 60
 retry_interval_seconds = 30
 verify_timeout_ms = 5000
+# Submit unchanged visible occupied input after 5 minutes; 0 disables this fallback.
+stale_input_seconds = 300
 
 [monitor]
 unknown_threshold_seconds = 60

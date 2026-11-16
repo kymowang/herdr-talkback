@@ -161,3 +161,15 @@ def test_rejects_removed_remote_configuration(tmp_path, monkeypatch, text):
     path.write_text(text)
     with pytest.raises(ValueError, match='local Herdr'):
         load_config(path)
+
+
+def test_stale_input_timeout_is_configurable_and_can_be_disabled(monkeypatch, tmp_path):
+    monkeypatch.setenv('HERDR_SOCKET_PATH', '/tmp/herdr.sock')
+    path = tmp_path / 'config.toml'
+    path.write_text('[delivery]\nstale_input_seconds = 0\n', encoding='utf-8')
+    assert load_config(path).delivery_stale_input_seconds == 0
+    path.write_text('[delivery]\nstale_input_seconds = 600\n', encoding='utf-8')
+    assert load_config(path).delivery_stale_input_seconds == 600
+    path.write_text('[delivery]\nstale_input_seconds = -1\n', encoding='utf-8')
+    with pytest.raises(ValueError, match='stale_input_seconds'):
+        load_config(path)

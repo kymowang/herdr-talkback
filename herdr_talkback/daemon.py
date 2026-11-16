@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Optional
 
@@ -121,7 +122,7 @@ class DaemonMessageRouter:
             except (ValueError, OSError) as exc:
                 return {'ok': False, 'error': str(exc)}
             return {'ok': True, 'enabled': payload['enabled'], 'applied': True}
-        if payload.get("type") != "send":
+        if payload.get("type") not in ("send", "whoami"):
             return {"ok": False, "error": "unsupported daemon request type"}
         raw_message = payload.get("message")
         if not isinstance(raw_message, str):
@@ -137,7 +138,7 @@ class DaemonMessageRouter:
                         target_name = match.group(2).strip()
                         registered = self.operator_store.pane(target_name)
                         if registered is not None:
-                            if target_name in self.config.aliases or target_name in self.registry.snapshot():
+                            if target_name in self.config.aliases or (target_name in self.registry.snapshot() and registered != self.config.core_node_id + '/' + target_name):
                                 raise MessageParseError('registered pane name conflicts with a local pane or alias')
                             raw_message = original[:match.start(2)] + registered + original[match.end(2):]
                 message = parse_message(
@@ -147,9 +148,15 @@ class DaemonMessageRouter:
                     local_node_id=self.config.core_node_id,
                     message_rules=getattr(self.config, "message_rules", ()),
                 )
+                if payload.get('type') == 'whoami':
+                    if message.source.split('/')[-1] not in self.registry.snapshot():
+                        raise MessageParseError('whoami source must be an active local pane')
+                    message = replace(message, metadata={'talkback_whoami': 1})
                 target = parse_endpoint_address(message.target_endpoint)
                 if not isinstance(target, EndpointAddress):
                     raise AssertionError("canonical target endpoint must be qualified")
+                if payload.get('type') == 'whoami' and target.node_id == self.config.core_node_id:
+                    raise MessageParseError('whoami target must be remote')
                 if target.node_id != self.config.core_node_id:
                     if self.peer_adapter is None:
                         raise MessageParseError("only local Herdr targets are supported; configure a network peer first")

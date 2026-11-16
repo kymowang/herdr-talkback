@@ -883,3 +883,109 @@ def test_delayed_check_does_not_submit_different_input(tmp_path):
         assert not any(method == 'pane.send_input' and params['text'] == ''
                        for method, params in client.requests)
     asyncio.run(scenario())
+
+
+def test_delivery_submits_wrapped_residue_when_zero_width_space_is_not_rendered(tmp_path):
+    async def scenario():
+        message_text = '[lead->dev-back] dependency sc2+A\u200bAD/cacheFixedSalt requires verification and a regression test'
+        visible = ('\u203a [lead->dev-back] dependency sc2+AAD/cacheFixedSalt requires\n'
+                   '  verification and a regression test\n  tab to queue message')
+        client = FakeClient([EMPTY_PROMPT, visible, EMPTY_PROMPT])
+        sleeper = FakeSleeper()
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, sleep=sleeper.sleep,
+                                       post_send_check_seconds=5).deliver(parse_message(message_text, ROLES, ALIASES))
+        assert result.delivered and result.reason == 'residue flushed'
+        assert sleeper.delays == [5]
+        assert client.requests.count(('pane.send_input', {'pane_id': 'p-back', 'text': '', 'keys': ['enter']})) == 1
+    asyncio.run(scenario())
+
+
+def test_delivery_submits_codex_collapsed_paste_after_five_seconds(tmp_path):
+    async def scenario():
+        message_text = '[lead->dev-back] ' + 'long task text ' * 100
+        collapsed = '\u203a [Pasted Content 1099 chars]remaining text\n  tab to queue message'
+        client = FakeClient([EMPTY_PROMPT, collapsed, EMPTY_PROMPT])
+        sleeper = FakeSleeper()
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, sleep=sleeper.sleep,
+                                       post_send_check_seconds=5).deliver(parse_message(message_text, ROLES, ALIASES))
+        assert result.delivered and result.reason == 'residue flushed'
+        assert sleeper.delays == [5]
+        assert client.requests.count(('pane.send_input', {'pane_id': 'p-back', 'text': '', 'keys': ['enter']})) == 1
+    asyncio.run(scenario())
+
+
+def test_delivery_never_submits_codex_collapsed_draft_present_before_send(tmp_path):
+    async def scenario():
+        client = FakeClient(['\u203a [Pasted Content 1099 chars]draft\n  tab to queue message'])
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1).deliver(
+            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert not result.delivered and result.reason == 'target input occupied'
+        assert not any(method == 'pane.send_input' for method, _ in client.requests)
+    asyncio.run(scenario())
+
+
+def test_stale_occupied_input_is_submitted_once_before_pending_message(tmp_path):
+    async def scenario():
+        class ClockSleeper:
+            now = 0
+            def clock(self): return self.now
+            async def sleep(self, seconds): self.now += seconds
+        timer = ClockSleeper()
+        client = FakeClient([OCCUPIED_PROMPT, OCCUPIED_PROMPT, OCCUPIED_PROMPT, OCCUPIED_PROMPT, EMPTY_PROMPT, EMPTY_PROMPT])
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
+            sleep=timer.sleep, clock=timer.clock, stale_input_seconds=300, stale_poll_seconds=150).deliver(
+                parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert result.delivered and timer.now >= 300
+        sends = [p for method, p in client.requests if method == 'pane.send_input']
+        assert sends == [{'pane_id':'p-back','text':'','keys':['enter']},
+                         {'pane_id':'p-back','text':MESSAGE_TEXT,'keys':['enter']}]
+    asyncio.run(scenario())
+
+
+def test_stale_input_change_restarts_the_five_minute_timer(tmp_path):
+    async def scenario():
+        class ClockSleeper:
+            now = 0
+            def clock(self): return self.now
+            async def sleep(self, seconds): self.now += seconds
+        timer = ClockSleeper(); changed = OCCUPIED_PROMPT.replace('half typed','changed draft')
+        client = FakeClient([OCCUPIED_PROMPT, changed, changed, changed, changed, EMPTY_PROMPT, EMPTY_PROMPT])
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
+            sleep=timer.sleep, clock=timer.clock, stale_input_seconds=300, stale_poll_seconds=150).deliver(
+                parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert result.delivered and timer.now >= 450
+    asyncio.run(scenario())
+
+
+def test_stale_input_does_not_submit_folded_content_with_hidden_edits(tmp_path):
+    async def scenario():
+        collapsed = '\u203a [Pasted Content 1099 chars]other text\n  tab to queue message'
+        client = FakeClient([collapsed])
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
+                                       stale_input_seconds=300).deliver(parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert not result.delivered
+        assert not any(method == 'pane.send_input' for method, _ in client.requests)
+    asyncio.run(scenario())
+
+
+def test_stale_input_that_cannot_be_confirmed_after_enter_blocks_pending_message(tmp_path):
+    async def scenario():
+        class Timer:
+            now = 0
+            def clock(self): return self.now
+            async def sleep(self, seconds): self.now += seconds
+        timer = Timer()
+        client = FakeClient([OCCUPIED_PROMPT, OCCUPIED_PROMPT, OCCUPIED_PROMPT, OCCUPIED_PROMPT])
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
+            sleep=timer.sleep, clock=timer.clock, stale_input_seconds=300, stale_poll_seconds=300).deliver(
+                parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert not result.delivered and result.reason == 'stale input submission not confirmed'
+        assert [p['text'] for m,p in client.requests if m == 'pane.send_input'] == ['']
+    asyncio.run(scenario())

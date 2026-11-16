@@ -88,3 +88,49 @@ def test_https_wrong_certificate_and_payload_limit(tmp_path):
                 await PeerClient('sender', replace(peer, ca_file=other.network.cert_file)).request('GET', '/v1/info')
 
     asyncio.run(scenario())
+
+
+def test_whoami_registration_is_atomic_idempotent_and_authenticated(tmp_path):
+    from herdr_talkback.operator_controls import OperatorStore
+    cfg, store = make_node(tmp_path, 'receiver', 'sender')
+    cfg.aliases = {}
+    controls = OperatorStore(store.state)
+    request = envelope('msg_identity')
+    request['metadata'] = {'talkback_whoami': 1}
+    created, receipt = store.receive('sender', request, registration_config=cfg, local_names=set())
+    assert created and controls.pane('agent') == 'sender/agent'
+    assert store.receive('sender', request, registration_config=cfg, local_names=set())[0] is False
+    another = envelope('msg_conflict')
+    another['source_endpoint'] = 'sender/lead'
+    another['metadata'] = {'talkback_whoami': 1}
+    controls.register_pane('lead', 'sender/other', cfg)
+    with pytest.raises(ValueError):
+        store.receive('sender', another, registration_config=cfg, local_names=set())
+    with pytest.raises(KeyError):
+        store.state.get_message('msg_conflict')
+
+
+def test_https_whoami_admission_registers_sender_and_enqueues_message(tmp_path):
+    from herdr_talkback.peer_http import PeerServer, PeerClient
+    from herdr_talkback.operator_controls import OperatorStore
+    async def scenario():
+        cfg, store = make_node(tmp_path, 'receiver', 'sender')
+        cfg.aliases = {}
+        controls = OperatorStore(store.state)
+        class Registry:
+            async def refresh(self): pass
+            def snapshot(self): return {'agent': object()}
+        # Use a different source name from the local recipient.
+        payload = envelope('msg_intro')
+        payload['source_endpoint'] = 'sender/monitor'
+        payload['metadata'] = {'talkback_whoami': 1}
+        wakes = []
+        async with PeerServer(cfg, store, SimpleNamespace(wake=wakes.append), Registry()) as server:
+            peer = replace(cfg.peers['sender'], node_id='receiver', url=f'https://127.0.0.1:{server.bound_port}')
+            client = PeerClient('sender', peer)
+            assert 'whoami_registration' in (await client.request('GET', '/v1/info'))['capabilities']
+            result = await client.request('POST', '/v1/messages', payload)
+            assert result['state'] == 'queued'
+            assert controls.pane('monitor') == 'sender/monitor'
+            assert wakes == ['receiver/agent']
+    asyncio.run(scenario())

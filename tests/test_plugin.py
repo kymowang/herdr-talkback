@@ -51,3 +51,22 @@ def test_plugin_refuses_duplicate_monitor(tmp_path, monkeypatch):
     monkeypatch.setattr(plugin, 'daemon_running', lambda path: False)
     monkeypatch.setattr(plugin, 'legacy_running', lambda: True)
     assert plugin.main(['start']) == 1
+
+
+def test_new_plugin_config_uses_and_persists_hostname(tmp_path, monkeypatch):
+    monkeypatch.setenv('HERDR_PLUGIN_CONFIG_DIR', str(tmp_path / 'config'))
+    monkeypatch.setenv('HERDR_PLUGIN_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('HERDR_SOCKET_PATH', '/tmp/test.sock')
+    monkeypatch.setattr('socket.gethostname', lambda: 'PC-54')
+    path = plugin.initialize()
+    assert load_config(path).core_node_id == 'PC-54'
+    monkeypatch.setattr('socket.gethostname', lambda: 'renamed')
+    assert load_config(plugin.initialize()).core_node_id == 'PC-54'
+
+
+def test_new_plugin_config_converts_unaddressable_hostname(tmp_path, monkeypatch):
+    monkeypatch.setenv('HERDR_PLUGIN_CONFIG_DIR', str(tmp_path / 'config'))
+    monkeypatch.setenv('HERDR_PLUGIN_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('HERDR_SOCKET_PATH', '/tmp/test.sock')
+    monkeypatch.setattr('socket.gethostname', lambda: '  PC 54 / dev  ')
+    assert load_config(plugin.initialize()).core_node_id == 'PC-54-dev'

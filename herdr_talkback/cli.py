@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import shutil
+import socket
 import subprocess
 import time
 import unicodedata
@@ -75,6 +76,12 @@ def build_parser() -> argparse.ArgumentParser:
     register = pane_sub.add_parser('register', help='Register a name for a local or remote node/pane')
     register.add_argument('name')
     register.add_argument('address')
+    pane_sub.add_parser('register-all', help='Register named local panes')
+    identity = pane_sub.add_parser('identity', help='Print a portable pane identity card')
+    identity.add_argument('pane')
+    identity.add_argument('--url', help='Advertised HTTPS origin, including port')
+    pane_import = pane_sub.add_parser('import', help='Register a manually forwarded identity card')
+    pane_import.add_argument('card', help='Identity JSON')
     registered = pane_sub.add_parser('registered', help='List registered pane names')
     registered.add_argument('--json', action='store_true')
     unregister = pane_sub.add_parser('unregister', help='Remove a registered pane name')
@@ -102,6 +109,10 @@ def build_parser() -> argparse.ArgumentParser:
     send.add_argument("message", nargs="+", action=JoinMessageAction)
     send.add_argument("--dry-run", action="store_true")
     send.add_argument("--direct", action="store_true")
+    whoami = sub.add_parser('whoami', help='Register and introduce a pane to a configured peer')
+    whoami.add_argument('source')
+    whoami.add_argument('host')
+    whoami.add_argument('target')
 
     exec_cmd = sub.add_parser("exec")
     exec_cmd.add_argument("targets")
@@ -135,6 +146,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             parser.error('monitor requires status, state, enable, or disable')
         if args.config is None:
             args.config = _discover_plugin_config()
+    elif args.command == 'pane' and args.pane_command == 'identity' and args.config is None:
+        args.config = _discover_plugin_config()
     try:
         return asyncio.run(_main_async(args))
     except KeyboardInterrupt:
@@ -230,17 +243,31 @@ async def _main_async(args) -> int:
                 print(f"{row['pane_id']}  herdr_status={row['herdr_status']}  "
                       f"logic_status={row['logic_status']}  {row['detail']}")
         return 0
-    if args.command == 'pane' and args.pane_command in ('register', 'registered', 'unregister'):
-        from .operator_controls import OperatorStore
+    if args.command == 'pane' and args.pane_command in ('register', 'registered', 'unregister', 'register-all', 'identity', 'import'):
+        from .operator_controls import OperatorStore, register_local_panes, make_identity_card, import_identity_card
         try:
             cfg = load_config(args.config)
             state = _load_read_state(args.config)
             store = OperatorStore(state)
-            if args.pane_command == 'register':
+            if args.pane_command == 'register-all':
+                panes = (await HerdrClient(cfg.socket_path).request('pane.list', {})).get('panes', [])
+                values = register_local_panes(store, cfg, panes)
+                print(json.dumps({'ok': True, 'panes': values}, ensure_ascii=False))
+            elif args.pane_command == 'identity':
+                panes = (await HerdrClient(cfg.socket_path).request('pane.list', {})).get('panes', [])
+                if sum(p.get('label') == args.pane for p in panes) != 1:
+                    raise ValueError('pane name must identify exactly one local pane')
+                print(json.dumps(make_identity_card(cfg, args.pane, args.url), ensure_ascii=False))
+            elif args.pane_command == 'import':
+                panes = (await HerdrClient(cfg.socket_path).request('pane.list', {})).get('panes', [])
+                card = json.loads(args.card)
+                status = import_identity_card(store, cfg, card, {p.get('label') for p in panes})
+                print(json.dumps({'ok': True, 'status': status, 'name': card['pane']}, ensure_ascii=False))
+            elif args.pane_command == 'register':
                 if args.name in cfg.aliases:
                     raise ValueError('name conflicts with a configured alias')
                 panes = (await HerdrClient(cfg.socket_path).request('pane.list', {})).get('panes', [])
-                if any(pane.get('label') == args.name for pane in panes):
+                if any(pane.get('label') == args.name for pane in panes) and args.address != cfg.core_node_id + '/' + args.name:
                     raise ValueError('name conflicts with a local pane')
                 store.register_pane(args.name, args.address, cfg)
                 print(json.dumps({'ok': True, 'name': args.name, 'address': args.address}))
@@ -363,6 +390,50 @@ async def _main_async(args) -> int:
         return 0 if response.get("ok") else 1
 
     cfg = load_config(args.config)
+
+    if args.command == 'whoami':
+        from urllib.parse import urlsplit
+        from .operator_controls import OperatorStore
+        try:
+            host = args.host
+            if host in cfg.peers:
+                matches = [host]
+            else:
+                requested = urlsplit(host if '://' in host else 'https://' + host)
+                matches = [node for node, peer in cfg.peers.items()
+                           if urlsplit(peer.url).hostname == requested.hostname
+                           and (requested.port is None or (urlsplit(peer.url).port or 443) == requested.port)]
+            if len(matches) != 1:
+                raise ValueError('host must match exactly one configured peer; include its port if needed')
+            node = matches[0]
+            panes = (await HerdrClient(cfg.socket_path).request('pane.list', {})).get('panes', [])
+            labels = [p.get('label') for p in panes]
+            if labels.count(args.source) != 1:
+                raise ValueError('source must identify exactly one local pane')
+            if args.target in labels or args.target in cfg.aliases:
+                raise ValueError('remote name conflicts with local pane or alias')
+            store = OperatorStore(_load_read_state(args.config))
+            address = node + '/' + args.target
+            existing = store.pane(args.target)
+            if existing and existing != address:
+                raise ValueError('target name is already registered to another pane')
+            if not existing:
+                store.register_pane(args.target, address, cfg)
+            source_location = cfg.core_node_id
+            try:
+                peer_url = urlsplit(cfg.peers[node].url)
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                    probe.connect((peer_url.hostname, peer_url.port or 443))
+                    source_location = '{}:{}'.format(probe.getsockname()[0], cfg.network.listen_port)
+            except (OSError, AttributeError):
+                pass  # The authenticated node ID remains sufficient for routing.
+            raw = '[{}\u2192{}][whoami] \u8fdc\u7a0b pane \u8bf7\u6c42\u767b\u8bb0\uff1a{} {} ({})'.format(
+                args.source, address, source_location, args.source, cfg.core_node_id)
+            response = await submit_daemon_request(cfg.daemon_socket_path, {'type': 'whoami', 'message': raw})
+        except (ValueError, OSError, RuntimeError) as exc:
+            response = {'ok': False, 'error': str(exc)}
+        print(json.dumps(response, ensure_ascii=False))
+        return 0 if response.get('ok') else 1
 
     if args.command == 'peers':
         if args.peers_command == 'list':
@@ -548,6 +619,7 @@ async def _main_async(args) -> int:
             retry_interval_seconds=cfg.delivery_retry_interval_seconds,
             notifier=notifier,
             verify_timeout_ms=getattr(cfg, "delivery_verify_timeout_ms", 0),
+            stale_input_seconds=getattr(cfg, 'delivery_stale_input_seconds', 300),
         )
         result = await delivery.deliver(message)
         print(

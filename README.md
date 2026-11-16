@@ -4,6 +4,21 @@ Herdr 原生插件：在有角色名称的 agent pane 之间可靠转发消息�
 
 ## 安装和运行
 
+### Herdr 插件市场安装
+
+先确保 Python 3.9+、Git 和 Herdr 0.9.1+ 可用，并使安装 Python 命令的目录出现在 Herdr 的 PATH 中。插件市场安装不会自动安装 Python 依赖；在启动服务前执行：
+
+```bash
+python -m pip install "herdr-talkback[network] @ git+https://github.com/kymowang/herdr-talkback.git"
+herdr plugin install kymowang/herdr-talkback
+herdr plugin action invoke herdr-talkback.check
+herdr plugin log list --plugin herdr-talkback
+herdr plugin action invoke herdr-talkback.start
+```
+
+Linux/macOS 上可能需要用 `python3` 代替 `python`。检查日志确认配置及连接成功；远程通信还需双方配置 peer。更新时同时更新 Python 包和 Herdr 插件，并重启服务；已链接的本地插件需先解除链接。
+
+
 支持 Windows、Linux 和 macOS，需要 Python 3.9+、Herdr 0.9.1+。Python 3.9/3.10 还需要 `tomli`，通过安装本项目自动安装。
 
 也可以生成包含 Talkback、Herdr 插件清单和 Codex skill 的跨平台安装包：
@@ -110,7 +125,13 @@ append = "上述内容如果是任务而非通知，完成后请通过talkback�
 
 输入框占用检查、投递前后校验等保护不依赖策略规则，始终保留。
 
-本地 Pane 发送后等待 5 秒，再检查当前可见输入框；如果识别到待发送消息仍在输入框，补发一次 Enter 并确认结果。跨主机消息由目标机器的 Talkback 对本地 Pane 执行此检查。
+本地 Pane 发送后等待 5 秒，再检查当前可见输入框；如果识别到待发送消息仍在输入框，补发一次 Enter 并确认结果。发送后的 Codex 输入框出现 `[Pasted Content ... chars]` 折叠内容时也会补发 Enter；发送前已存在的折叠草稿仍视为占用。跨主机消息由目标机器的 Talkback 对本地 Pane 执行此检查。
+
+### 无人值守时的输入框占用
+
+当有消息等待本机 Pane 投递，且输入框被占用时，Talkback 每 30 秒检查当前可见画面。画面连续 5 分钟不变后再次确认，补按一次 Enter；无论草稿来源都会提交。只有确认输入框清空后才继续投递待发消息。画面任何变化均重新计时；服务重启后也重新计时。折叠内容无法确认是否改变，不触发该兜底；无法识别输入框或 Pane 离线时也不会盲目提交。跨机消息由接收端 Talkback 执行此处理。
+
+可在 `[delivery]` 中设置 `stale_input_seconds = 300`；设为 `0` 关闭兜底。设置会对其他来源的未提交草稿产生提交效果。
 
 ## 通信命令
 
@@ -236,6 +257,18 @@ herdr-talkback --config "$CFG" pane unregister remote_lead
 数据库中，不会自动同步到另一台机器。远端节点必须先在配置中设置；登记时要求能
 连接本地 Herdr，并拒绝与现有本机 pane 或配置别名冲突的名称。登记名称用于普通队列
 投递，不支持 `--direct`。
+
+### 批量登记、whoami 和人工转发
+
+```bash
+herdr-talkback --config "$CFG" pane register-all
+herdr-talkback --config "$CFG" whoami monitor 192.168.90.18 lead
+herdr-talkback pane identity monitor
+# 把上一条输出的 JSON 转发给对方，对方执行：
+herdr-talkback --config "$CFG" pane import '<identity-json>'
+```
+
+`register-all` 按项报告未命名或冲突的 Pane，不覆盖已有登记。`whoami` 在发送端登记目标，接收端认证发送节点后登记发送方并投递消息。查询返回的消息 ID 以确认最终状态。双方都需要新版 Talkback 及已配置的可信 peer。`identity` 自动查找当前 Herdr 插件配置，并使用其明确的监听地址和端口；监听地址是通配地址或仅本机可访问时，用 `--url` 显式指定可访问的 HTTPS 地址。身份卡不包含凭据，也不自动创建 peer。身份卡返回本机公开证书路径和按 peer 区分的 token 路径，路径只在发送机器上有意义；需要另行通过可信方式交换文件。首次生成插件配置时使用本机 hostname 作为节点 ID；既有配置不会自动改名。
 
 ## 开发验证
 

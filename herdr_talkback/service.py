@@ -165,6 +165,7 @@ async def run_service(config, dry_run: bool = False) -> int:
         max_attempts=config.delivery_max_attempts,
         retry_interval_seconds=config.delivery_retry_interval_seconds,
         verify_timeout_ms=getattr(config, "delivery_verify_timeout_ms", 0),
+        stale_input_seconds=getattr(config, 'delivery_stale_input_seconds', 300),
         notifier=notifier,
         manage_message_state=False,
     )
@@ -185,7 +186,7 @@ async def run_service(config, dry_run: bool = False) -> int:
                 peer_adapter.ensure_endpoint(target)
     dispatcher = CoreDispatcher(state, endpoint_registry, adapters)
     if network_enabled:
-        peer_server = PeerServer(config, peer_store, dispatcher)
+        peer_server = PeerServer(config, peer_store, dispatcher, registry=role_registry)
     daemon_router = DaemonMessageRouter(
         config,
         role_registry,

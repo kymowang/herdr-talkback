@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from .input_parser import inspect_input
+from .input_parser import inspect_input, ANSI_RE, CODEX_PASTE_BLOCK_RE
 from .notifier import NullNotifier, notify_alert
 from .state import TalkbackState
 from .types import MessageState, RoutedMessage
@@ -31,6 +32,9 @@ class DeliveryService:
         verify_timeout_ms: int = 0,
         verify_poll_interval_seconds: float = 0.25,
         post_send_check_seconds: float = 5,
+        stale_input_seconds: float = 0,
+        stale_poll_seconds: float = 30,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.client = client
         self.registry = registry
@@ -43,6 +47,11 @@ class DeliveryService:
         self.verify_timeout_ms = verify_timeout_ms
         self.verify_poll_interval_seconds = verify_poll_interval_seconds
         self.post_send_check_seconds = post_send_check_seconds
+        if stale_input_seconds < 0 or (stale_input_seconds > 0 and stale_poll_seconds <= 0):
+            raise ValueError('invalid stale input timing')
+        self.stale_input_seconds = stale_input_seconds
+        self.stale_poll_seconds = stale_poll_seconds
+        self.clock = clock
 
     async def deliver(self, message: RoutedMessage) -> DeliveryResult:
         pane_id = self.registry.resolve_pane(message.resolved_target)
@@ -61,6 +70,14 @@ class DeliveryService:
                 await self.sleep(self.verify_poll_interval_seconds)
                 before = await self._read_input(pane_id)
                 before_state = inspect_input(before, message.raw_text)
+            if before_state.kind == "occupied" and self.stale_input_seconds > 0:
+                recovered = await self._recover_stale_input(pane_id, before, message, attempt)
+                if recovered == 'empty':
+                    before_state = inspect_input('❯ ', message.raw_text)
+                elif recovered == 'unconfirmed':
+                    self._update_message_state(message.message_id, MessageState.FAILED, 'stale input submission not confirmed')
+                    self.state.record_attempt(message.message_id, attempt, 'checking_input', 'failed', 'stale input submission not confirmed')
+                    return DeliveryResult(False, 'stale input submission not confirmed', attempt)
             if before_state.kind == "occupied":
                 if attempt < self.max_attempts:
                     self._update_message_state(
@@ -169,6 +186,56 @@ class DeliveryService:
             "pane.read", {"pane_id": pane_id, "source": "visible", "format": "ansi"}
         )
         return result["read"]["text"]
+
+    async def _recover_stale_input(self, pane_id, initial, message, attempt):
+        # Compare the entire visible screen: unrelated updates reset the timer,
+        # but a hidden or partially visible edit must never be mistaken as stable.
+        def snapshot(screen):
+            return ANSI_RE.sub('', screen).replace('\r', '')
+
+        previous = snapshot(initial)
+        def has_folded_content(screen):
+            text = snapshot(screen)
+            prompt = max(text.rfind('›'), text.rfind('❯'))
+            composer = text[prompt + 1:] if prompt >= 0 else text
+            return bool(CODEX_PASTE_BLOCK_RE.search(composer) or '[Pasted text #' in composer)
+
+        if has_folded_content(initial):
+            return 'unavailable'
+        stable_since = self.clock()
+        while True:
+            remaining = self.stale_input_seconds - (self.clock() - stable_since)
+            if remaining > 0:
+                await self.sleep(min(self.stale_poll_seconds, remaining))
+            current = await self._read_input(pane_id)
+            current_state = inspect_input(current, '')
+            if current_state.kind == 'empty':
+                return 'empty'
+            if current_state.kind != 'occupied':
+                return 'unavailable'
+            if has_folded_content(current):
+                return 'unavailable'
+            current_snapshot = snapshot(current)
+            if current_snapshot != previous:
+                previous = current_snapshot
+                stable_since = self.clock()
+                continue
+            if self.clock() - stable_since < self.stale_input_seconds:
+                continue
+            # One last read ensures no observable edit occurred after the timer.
+            final = await self._read_input(pane_id)
+            if snapshot(final) != previous or inspect_input(final, '').kind != 'occupied':
+                return 'unavailable'
+            self.state.record_attempt(message.message_id, attempt, 'checking_input', 'checking_input', 'stale input submitted')
+            await self.client.request('pane.send_input', {'pane_id': pane_id, 'text': '', 'keys': ['enter']})
+            await notify_alert(self.notifier, 'Herdr Talkback submitted stale input',
+                               f'{message.target} input stayed unchanged and was submitted',
+                               'delivery_stale_input_submitted',
+                               {'message_id': message.message_id, 'target': message.target,
+                                'pane_id': pane_id, 'stable_seconds': self.stale_input_seconds})
+            await self.sleep(self.verify_poll_interval_seconds)
+            after = await self._read_input(pane_id)
+            return 'empty' if inspect_input(after, '').kind == 'empty' else 'unconfirmed'
 
     def _update_message_state(self, message_id: str, state: MessageState, reason: str) -> None:
         if self.manage_message_state:

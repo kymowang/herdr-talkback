@@ -23,8 +23,9 @@ class PeerProtocolError(ValueError):
 
 
 class PeerServer:
-    def __init__(self, config, store, dispatcher):
+    def __init__(self, config, store, dispatcher, registry=None):
         self.config, self.store, self.dispatcher = config, store, dispatcher
+        self.registry = registry
         self.tokens = {node: peer.token() for node, peer in config.peers.items()}
         self.active = 0
         self.runner = None
@@ -79,7 +80,8 @@ class PeerServer:
     async def _authorized(self, request, peer):
         if request.method == 'GET' and request.path == '/v1/info':
             return web.json_response(dict(protocol_version=1, node_id=self.config.core_node_id,
-                                          instance_id=self.store.instance_id))
+                                          instance_id=self.store.instance_id,
+                                          capabilities=['whoami_registration'] if self.registry is not None else []))
         if request.method == 'POST' and request.path == '/v1/messages':
             if request.headers.get('X-Talkback-Instance') != self.store.instance_id:
                 return web.json_response({'error': 'receiver storage instance changed'}, status=412)
@@ -88,7 +90,14 @@ class PeerServer:
             if self.config.roles and target.endpoint_id not in self.config.roles:
                 raise ValueError('target role is not configured')
             try:
-                created, receipt = self.store.receive(peer, payload)
+                if payload['metadata'].get('talkback_whoami') == 1:
+                    if self.registry is None:
+                        raise ValueError('whoami registry unavailable')
+                    await self.registry.refresh()
+                    created, receipt = self.store.receive(peer, payload, registration_config=self.config,
+                                                          local_names=set(self.registry.snapshot()))
+                else:
+                    created, receipt = self.store.receive(peer, payload)
             except PeerConflict:
                 return web.json_response({'error': 'message identity conflict'}, status=409)
             except PeerCapacity:

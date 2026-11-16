@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import hashlib
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
@@ -39,6 +40,7 @@ class TalkbackConfig:
     delivery_max_attempts: int = 5
     delivery_retry_interval_seconds: float = 30
     delivery_verify_timeout_ms: int = 5000
+    delivery_stale_input_seconds: float = 300
     monitor_unknown_threshold_seconds: int = 60
     monitor_continue_cooldown_seconds: int = 120
     monitor_max_continues_per_30m: int = 3
@@ -97,6 +99,9 @@ def load_config(path: Optional[Path]) -> TalkbackConfig:
     aliases.update(_mapping(raw.get("aliases")))
     node_id = validate_node_id(core.get("node_id", "linux-main"))
     network, peers = load_network(raw, resolved_path, node_id)
+    stale_input_seconds = float(delivery.get('stale_input_seconds', 300))
+    if not math.isfinite(stale_input_seconds) or stale_input_seconds < 0:
+        raise ValueError('delivery.stale_input_seconds must be a finite nonnegative number')
 
     return TalkbackConfig(
         socket_path=Path(raw.get("socket_path") or default_socket_path()),
@@ -110,6 +115,7 @@ def load_config(path: Optional[Path]) -> TalkbackConfig:
         delivery_max_attempts=int(delivery.get("max_attempts", 5)),
         delivery_retry_interval_seconds=float(delivery.get("retry_interval_seconds", 30)),
         delivery_verify_timeout_ms=int(delivery.get("verify_timeout_ms", 5000)),
+        delivery_stale_input_seconds=stale_input_seconds,
         monitor_unknown_threshold_seconds=int(monitor.get("unknown_threshold_seconds", 60)),
         monitor_continue_cooldown_seconds=int(monitor.get("continue_cooldown_seconds", 120)),
         monitor_max_continues_per_30m=int(monitor.get("max_continues_per_30m", 3)),
