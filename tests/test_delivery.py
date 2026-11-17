@@ -989,3 +989,21 @@ def test_stale_input_that_cannot_be_confirmed_after_enter_blocks_pending_message
         assert not result.delivered and result.reason == 'stale input submission not confirmed'
         assert [p['text'] for m,p in client.requests if m == 'pane.send_input'] == ['']
     asyncio.run(scenario())
+
+
+def test_delivery_flushes_folded_multiline_draft_instead_of_confirming(tmp_path):
+    async def scenario():
+        message = "[lead→dev-back] ping\n第二行\n第三行"
+        folded = "❯ [[lead→dev-… +2L]"
+        client = FakeClient([EMPTY_PROMPT, folded, EMPTY_PROMPT])
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+        result = await DeliveryService(client, FakeRegistry(), state).deliver(
+            parse_message(message, ROLES, ALIASES))
+        assert result.delivered
+        assert result.reason == "residue flushed"
+        sends = [params for method, params in client.requests if method == "pane.send_input"]
+        assert sends[0] == {"pane_id": "p-back", "text": message, "keys": ["enter"]}
+        assert sends[-1] == {"pane_id": "p-back", "text": "", "keys": ["enter"]}
+
+    asyncio.run(scenario())

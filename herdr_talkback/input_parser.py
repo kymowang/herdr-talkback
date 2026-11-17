@@ -12,6 +12,12 @@ SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
 RGB_RE = re.compile(r"\x1b\[38;2;(\d+);(\d+);(\d+)m")
 PASTE_BLOCK_RE = re.compile(r"^\[Pasted text #\d+(?: \+\d+ lines)?\]$")
 CODEX_PASTE_BLOCK_RE = re.compile(r"\[Pasted Content [1-9]\d* chars\]")
+# Multi-line drafts folded by CLIs that keep the draft in the composer until
+# Enter (seen with the deepseek `cmd` agent: `[[lead2→lea… +2L]`). The block is
+# neither empty nor submitted, so it must count as residue/occupancy.
+FOLDED_PASTE_RE = re.compile(r"^\[(.*?)\u2026\s*\+\s*(\d+)\s*L\]$")
+FOLDED_PASTE_MARKER_RE = re.compile(r"\u2026\s*\+\s*\d+\s*L\]")
+FOLDED_PASTE_MIN_PREFIX = 8
 IMAGE_PLACEHOLDER_RE = re.compile(r"\[Image #\d+\]\s*")
 PROMPT_MARKERS = ("❯", "›")
 PLACEHOLDER_TEXT = (
@@ -64,6 +70,17 @@ def inspect_input(
         return InputState(kind=kind, text_after_prompt=visible, contains_expected_message=True)
     if not visible:
         return InputState(kind="empty", text_after_prompt="")
+    if _folded_paste(visible) is not None:
+        # 折叠的多行草稿仍在 composer 里,既不是空输入也不算已提交:
+        # 忙时 CLI 会把它留着,只有 Enter 才真正提交。误判为空会让发送前
+        # 检查漏掉占用,也会让发送后校验假报 delivered。
+        if expected_message and _is_expected_folded_residue(visible, expected_message):
+            return InputState(
+                kind="residue",
+                text_after_prompt=visible,
+                contains_expected_message=True,
+            )
+        return InputState(kind="occupied", text_after_prompt=visible)
     # 占位/ghost 文本必须先于「等于期望消息 → residue」判定：
     # Claude Code 的空输入框会画 dim 的 ghost 建议（如 continue），而监控发的控制词恰好
     # 也可能是 continue；若先走相等判定，会把 ghost 当成"我方消息残留在输入框"，
@@ -368,6 +385,38 @@ def _is_expected_paste_block_residue(visible: str, expected_message: str) -> boo
         and PASTE_BLOCK_RE.match(visible)
         and ("\n" in expected_message or len(expected) >= 40)
     )
+
+
+def _folded_paste(visible: str):
+    """Return the visible prefix and folded-line count of a folded composer block."""
+    match = FOLDED_PASTE_RE.match(visible)
+    if match is None:
+        return None
+    return _normalize_visible(match.group(1)), int(match.group(2))
+
+
+def _is_expected_folded_residue(visible: str, expected_message: str) -> bool:
+    folded = _folded_paste(visible)
+    if folded is None or not expected_message:
+        return False
+    prefix, extra_lines = folded
+    if len(prefix) < FOLDED_PASTE_MIN_PREFIX:
+        return False
+    lines = expected_message.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    # The folded marker counts lines beyond the first; a mismatch means this
+    # draft belongs to a different message and pressing Enter would submit it.
+    if extra_lines != max(0, len(lines) - 1):
+        return False
+    expected = _normalize_visible(expected_message)
+    return bool(
+        expected
+        and (expected.startswith(prefix) or _compact_visible(expected).startswith(_compact_visible(prefix)))
+    )
+
+
+def is_folded_paste_block(text: str) -> bool:
+    """Detect a folded multi-line draft anywhere in a rendered composer."""
+    return bool(FOLDED_PASTE_MARKER_RE.search(_strip_ansi(text)))
 
 
 def _is_expected_soft_wrapped_residue(segment: str, expected_message: str) -> bool:

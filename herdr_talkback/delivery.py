@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from .input_parser import inspect_input, ANSI_RE, CODEX_PASTE_BLOCK_RE
+from .input_parser import inspect_input, ANSI_RE, CODEX_PASTE_BLOCK_RE, is_folded_paste_block
 from .notifier import NullNotifier, notify_alert
 from .state import TalkbackState
 from .types import MessageState, RoutedMessage
@@ -198,7 +198,8 @@ class DeliveryService:
             text = snapshot(screen)
             prompt = max(text.rfind('›'), text.rfind('❯'))
             composer = text[prompt + 1:] if prompt >= 0 else text
-            return bool(CODEX_PASTE_BLOCK_RE.search(composer) or '[Pasted text #' in composer)
+            return bool(CODEX_PASTE_BLOCK_RE.search(composer) or '[Pasted text #' in composer
+                        or is_folded_paste_block(composer))
 
         if has_folded_content(initial):
             return 'unavailable'

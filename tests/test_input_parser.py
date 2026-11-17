@@ -318,3 +318,39 @@ def test_codex_collapsed_paste_on_wrapped_composer_line_is_recognized():
     screen = '\u203a a visible prefix\n  [Pasted Content 1099 chars]remaining text\n  tab to queue message'
     assert inspect_input(screen, 'message', allow_transformed_residue=True).kind == 'residue'
     assert inspect_input(screen, 'message').kind == 'occupied'
+
+
+def test_folded_multiline_draft_is_occupied_not_empty():
+    # deepseek `cmd` keeps an unsubmitted multi-line draft folded in the composer.
+    screen = "❯ [[lead2→lea… +2L]"
+
+    state = inspect_input(screen, expected_message="[scheduler→pc-76] 另一条要求\n第二行\n第三行")
+
+    assert state.kind == "occupied"
+    assert state.text_after_prompt == "[[lead2→lea… +2L]"
+
+
+def test_folded_multiline_draft_matching_expected_is_residue():
+    message = "[lead2→lead3] 收到第三轮。请继续\n第二行\n第三行"
+    screen = "❯ \x1b[38;2;255;255;255m[[lead2→lea… +2L]\x1b[0m"
+
+    state = inspect_input(screen, expected_message=message)
+
+    assert state.kind == "residue"
+    assert state.contains_expected_message is True
+
+
+def test_folded_draft_with_other_line_count_is_occupied():
+    message = "[lead2→lead3] 收到第三轮。请继续\n第二行"  # 2 lines -> +1L
+
+    state = inspect_input("❯ [[lead2→lea… +2L]", expected_message=message)
+
+    assert state.kind == "occupied"
+
+
+def test_folded_draft_with_short_prefix_is_occupied():
+    message = "[a] x\n第二行"
+
+    state = inspect_input("❯ [[a] x… +1L]", expected_message=message)
+
+    assert state.kind == "occupied"
