@@ -1,4 +1,4 @@
-from herdr_talkback.input_parser import InputState, inspect_input
+from herdr_talkback.input_parser import InputState, inspect_input, sanitize_snapshot
 
 
 def test_codex_submission_requires_dim_prompt_and_post_send_verification():
@@ -222,6 +222,70 @@ def test_expected_message_with_extra_text_is_occupied():
     assert state.contains_expected_message is False
 
 
+def _sep(width=40):
+    return "\u2500" * width
+
+
+CLAUDE_GHOST_PROMPT = "\n".join([
+    _sep(),
+    "\u276f\xa0\x1b[0m\x1b[2mcontinue\x1b[0m",
+    _sep(),
+    "  \x1b[2m\x1b[38;2;153;153;153m~/arc (u) | ctx 50% | gpt-6.1-terra\x1b[0m",
+    "  \x1b[38;2;255;107;128m\u23f5\u23f5 bypass permissions on (shift+tab to cycle)\x1b[0m",
+])
+
+CODEX_PLACEHOLDER_PROMPT = "\n".join([
+    "  earlier transcript line",
+    "",
+    "\u203a \x1b[2mAsk Codex to do anything\x1b[0m",
+    "  GPT-6.1 Terra low \xb7 ~/arc \xb7 u \xb7 Main [default]",
+    "  Earlier messages available. enter/esc latest \xb7 ? shortcuts",
+])
+
+
+def test_dim_ghost_prompt_matching_control_word_is_empty_not_residue():
+    # Claude 空输入框画 dim 的 ghost ``continue``;监控的控制词也是 continue。
+    # 顺序错了会把 ghost 当成本方残留(strict 发送被自己拒绝)。
+    assert inspect_input(CLAUDE_GHOST_PROMPT, "continue").kind == "empty"
+    assert inspect_input(CLAUDE_GHOST_PROMPT, "").kind == "empty"
+
+
+def test_sanitize_snapshot_drops_claude_ghost_prompt():
+    out = sanitize_snapshot(CLAUDE_GHOST_PROMPT)
+    assert "continue" not in out
+    assert "bypass permissions" in out
+
+
+def test_sanitize_snapshot_drops_codex_placeholder():
+    out = sanitize_snapshot(CODEX_PLACEHOLDER_PROMPT)
+    assert "Ask Codex to do anything" not in out
+    assert "GPT-6.1" in out
+
+
+def test_sanitize_snapshot_keeps_dim_transcript_echo_before_assistant_output():
+    # Codex 生成中会把最后一条用户消息以 dim 回显在历史里;后面是助手输出 → 不是输入框,保留。
+    text = "\n".join([
+        "earlier assistant text",
+        "",
+        "\u203a \x1b[2mcontinue\x1b[0m",
+        "  assistant is still working on it",
+        "  more output",
+    ])
+    out = sanitize_snapshot(text)
+    assert "continue" in out
+    assert "assistant is still working" in out
+
+
+def test_sanitize_snapshot_drops_idle_composer_draft():
+    # 输入框在屏幕底部、上下都是 chrome → 属于输入框;不进判断快照(输入是否可写由 _empty 单独把关)。
+    text = "\n".join([
+        _sep(),
+        "\u276f \x1b[38;2;248;248;242ma user draft\x1b[0m",
+        _sep(),
+        "  ~/arc (u) | ctx 20% | gpt-6.1-terra",
+    ])
+    out = sanitize_snapshot(text)
+    assert "a user draft" not in out
 def test_wrapped_message_with_invisible_zero_width_space_matches_after_send():
     expected = '[sender->target] dependency sc2+A\u200bAD/cacheFixedSalt requires verification and a regression test'
     screen = ('\u203a [sender->target] dependency sc2+AAD/cacheFixedSalt requires\n'
@@ -254,3 +318,74 @@ def test_codex_collapsed_paste_on_wrapped_composer_line_is_recognized():
     screen = '\u203a a visible prefix\n  [Pasted Content 1099 chars]remaining text\n  tab to queue message'
     assert inspect_input(screen, 'message', allow_transformed_residue=True).kind == 'residue'
     assert inspect_input(screen, 'message').kind == 'occupied'
+
+
+def test_folded_multiline_draft_is_occupied_not_empty():
+    # deepseek `cmd` keeps an unsubmitted multi-line draft folded in the composer.
+    screen = "❯ [[lead2→lea… +2L]"
+
+    state = inspect_input(screen, expected_message="[scheduler→pc-76] 另一条要求\n第二行\n第三行")
+
+    assert state.kind == "occupied"
+    assert state.text_after_prompt == "[[lead2→lea… +2L]"
+
+
+def test_folded_multiline_draft_matching_expected_is_residue():
+    message = "[lead2→lead3] 收到第三轮。请继续\n第二行\n第三行"
+    screen = "❯ \x1b[38;2;255;255;255m[[lead2→lea… +2L]\x1b[0m"
+
+    state = inspect_input(screen, expected_message=message, agent="cmd")
+
+    assert state.kind == "residue"
+    assert state.contains_expected_message is True
+    # Other agents never get the residue interpretation for folded drafts.
+    assert inspect_input(screen, expected_message=message).kind == "occupied"
+    assert inspect_input(screen, expected_message=message, agent="codex").kind == "occupied"
+
+
+def test_folded_draft_with_fewer_lines_than_message_is_occupied():
+    message = "[lead2→lead3] 收到第三轮。请继续\n第二行\n第三行\n第四行"  # 4 lines -> at least +3L
+
+    state = inspect_input("❯ [[lead2→lea… +1L]", expected_message=message)
+
+    assert state.kind == "occupied"
+
+
+def test_folded_draft_with_short_prefix_is_occupied():
+    message = "[a] x\n第二行"
+
+    state = inspect_input("❯ [[a] x… +1L]", expected_message=message)
+
+    assert state.kind == "occupied"
+
+
+def test_folded_draft_wrapped_opening_line_is_residue():
+    # The CLI counts rendered lines, so soft wrapping makes the marker larger
+    # than the logical newline count.
+    message = "[lead2→lead3] " + "收到。按用户已授权的完整升级链继续：" + "x" * 600 + "\n回执说明"
+    screen = "❯ [[lead2→lea… +2L]"
+
+    state = inspect_input(screen, expected_message=message, agent="cmd")
+
+    assert state.kind == "residue"
+    assert state.contains_expected_message is True
+
+
+def test_head_truncated_long_opening_line_is_residue():
+    message = "[lead2→lead3] 收到。按用户已授权的完整升级链继续：" + "x" * 600 + "\n回执说明"
+    head = message.split("\n")[0][:80]
+
+    state = inspect_input("❯ " + head, expected_message=message,
+                          allow_transformed_residue=True, agent="cmd")
+
+    assert state.kind == "residue"
+    assert state.contains_expected_message is True
+    assert inspect_input("❯ " + head, expected_message=message).kind == "occupied"
+
+
+def test_short_visible_head_of_expected_message_stays_occupied():
+    message = "[lead2→lead3] 收到。按用户已授权的完整升级链继续：" + "x" * 600
+
+    state = inspect_input("❯ [lead2→lea", expected_message=message)
+
+    assert state.kind == "occupied"

@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Optional
 
-from .input_parser import inspect_input, ANSI_RE, CODEX_PASTE_BLOCK_RE
+from .input_parser import inspect_input, ANSI_RE, CODEX_PASTE_BLOCK_RE, is_folded_paste_block
 from .notifier import NullNotifier, notify_alert
 from .state import TalkbackState
 from .types import MessageState, RoutedMessage
@@ -57,13 +57,14 @@ class DeliveryService:
 
     async def deliver(self, message: RoutedMessage) -> DeliveryResult:
         pane_id = self.registry.resolve_pane(message.resolved_target)
+        agent = self._agent_for(message.resolved_target)
         if self.manage_message_state:
             self.state.create_message(message.message_id, message.source, message.target, pane_id, message.raw_text)
 
         for attempt in range(1, self.max_attempts + 1):
             self._update_message_state(message.message_id, MessageState.CHECKING_INPUT, "checking target input")
             before = await self._read_input(pane_id)
-            before_state = inspect_input(before, message.raw_text)
+            before_state = inspect_input(before, message.raw_text, agent=agent)
             if before_state.kind == "dismissible_overlay":
                 self.state.record_attempt(
                     message.message_id, attempt, "checking_input", "checking_input", "dismissed overlay"
@@ -71,11 +72,11 @@ class DeliveryService:
                 await self._dismiss_overlay(pane_id)
                 await self.sleep(self.verify_poll_interval_seconds)
                 before = await self._read_input(pane_id)
-                before_state = inspect_input(before, message.raw_text)
+                before_state = inspect_input(before, message.raw_text, agent=agent)
             if before_state.kind == "occupied" and self.stale_input_seconds > 0:
                 recovered = await self._recover_stale_input(pane_id, before, message, attempt)
                 if recovered == 'empty':
-                    before_state = inspect_input('❯ ', message.raw_text)
+                    before_state = inspect_input('❯ ', message.raw_text, agent=agent)
                 elif recovered == 'unconfirmed':
                     self._update_message_state(message.message_id, MessageState.FAILED, 'stale input submission not confirmed')
                     self.state.record_attempt(message.message_id, attempt, 'checking_input', 'failed', 'stale input submission not confirmed')
@@ -121,7 +122,8 @@ class DeliveryService:
                 self.state.record_attempt(
                     message.message_id, attempt, "checking_input", "verifying", "flushing residue"
                 )
-                return await self._flush_message_residue(message.message_id, pane_id, message.raw_text, attempt)
+                return await self._flush_message_residue(
+                    message.message_id, pane_id, message.raw_text, attempt, agent=agent)
 
             self._update_message_state(message.message_id, MessageState.SENDING, "sending message")
             await self.client.request(
@@ -132,13 +134,14 @@ class DeliveryService:
 
             if self.post_send_check_seconds > 0:
                 await self.sleep(self.post_send_check_seconds)
-            verified = await self._verify(pane_id, message.raw_text)
+            verified = await self._verify(pane_id, message.raw_text, agent=agent)
             if verified == "delivered":
                 self._update_message_state(message.message_id, MessageState.DELIVERED, "input cleared")
                 return DeliveryResult(True, "input cleared", attempt)
             if verified == "residue":
                 await self._notify_stuck_input_submitted(message, attempt)
-                return await self._flush_message_residue(message.message_id, pane_id, message.raw_text, attempt)
+                return await self._flush_message_residue(
+                    message.message_id, pane_id, message.raw_text, attempt, agent=agent)
 
             self._update_message_state(message.message_id, MessageState.RETRYING, "delivery ambiguous")
             self.state.record_attempt(message.message_id, attempt, "verifying", "retrying", "delivery ambiguous")
@@ -191,6 +194,15 @@ class DeliveryService:
             return await self._flush_control_residue(pane_id, text)
         return DeliveryResult(False, "control not confirmed", 1)
 
+    def _agent_for(self, role: str) -> Optional[str]:
+        getter = getattr(self.registry, "get_agent", None)
+        if getter is None:
+            return None
+        try:
+            return getattr(getter(role), "agent", None)
+        except Exception:
+            return None
+
     async def _read_input(self, pane_id: str) -> str:
         result = await self.client.request(
             "pane.read", {"pane_id": pane_id, "source": "visible", "format": "ansi"}
@@ -208,7 +220,8 @@ class DeliveryService:
             text = snapshot(screen)
             prompt = max(text.rfind('›'), text.rfind('❯'))
             composer = text[prompt + 1:] if prompt >= 0 else text
-            return bool(CODEX_PASTE_BLOCK_RE.search(composer) or '[Pasted text #' in composer)
+            return bool(CODEX_PASTE_BLOCK_RE.search(composer) or '[Pasted text #' in composer
+                        or is_folded_paste_block(composer))
 
         if has_folded_content(initial):
             return 'unavailable'
@@ -254,9 +267,9 @@ class DeliveryService:
     async def _dismiss_overlay(self, pane_id: str) -> None:
         await self.client.request("pane.send_input", {"pane_id": pane_id, "text": "", "keys": ["esc"]})
 
-    async def _verify(self, pane_id: str, expected_message: str, timeout_ms=None) -> str:
+    async def _verify(self, pane_id: str, expected_message: str, timeout_ms=None, agent=None) -> str:
         after = await self._read_input(pane_id)
-        state = inspect_input(after, expected_message, allow_transformed_residue=True)
+        state = inspect_input(after, expected_message, allow_transformed_residue=True, agent=agent)
         if state.kind == "submitted":
             return "delivered"
         timeout_seconds = (self.verify_timeout_ms if timeout_ms is None else timeout_ms) / 1000
@@ -278,7 +291,7 @@ class DeliveryService:
             elapsed_seconds += delay
 
             after = await self._read_input(pane_id)
-            state = inspect_input(after, expected_message, allow_transformed_residue=True)
+            state = inspect_input(after, expected_message, allow_transformed_residue=True, agent=agent)
             if state.kind == "submitted":
                 return "delivered"
             if state.kind == "empty":
@@ -292,11 +305,23 @@ class DeliveryService:
         return "residue" if state.kind == "residue" else "delivered"
 
     async def _flush_message_residue(
-        self, message_id: str, pane_id: str, expected_message: str, attempt: int
+        self, message_id: str, pane_id: str, expected_message: str, attempt: int, agent=None
     ) -> DeliveryResult:
         await self.client.request("pane.send_input", {"pane_id": pane_id, "text": "", "keys": ["enter"]})
-        verified_after_flush = await self._verify(pane_id, expected_message)
-        if verified_after_flush == "delivered":
+        # A folded draft clears only after the CLI repaints the composer, so a
+        # single immediate read reports residue that is already being submitted.
+        deadline_seconds = max(self.verify_timeout_ms, 1000) / 1000
+        waited = 0.0
+        raw = await self._read_input(pane_id)
+        state = inspect_input(raw, expected_message, allow_transformed_residue=True, agent=agent)
+        # Only a folded draft needs the extra wait; plain visible residue is
+        # reported immediately so a stuck draft still fails fast.
+        while state.kind == "residue" and is_folded_paste_block(raw) and waited < deadline_seconds:
+            await self.sleep(self.verify_poll_interval_seconds)
+            waited += self.verify_poll_interval_seconds
+            raw = await self._read_input(pane_id)
+            state = inspect_input(raw, expected_message, allow_transformed_residue=True, agent=agent)
+        if state.kind in {"empty", "submitted"}:
             self._update_message_state(message_id, MessageState.DELIVERED, "residue flushed")
             return DeliveryResult(True, "residue flushed", attempt)
 

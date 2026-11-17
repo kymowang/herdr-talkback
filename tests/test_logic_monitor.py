@@ -5,7 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from herdr_talkback.logic_config import LogicMonitorConfig
-from herdr_talkback.logic_monitor import LogicalPaneMonitor, normalize_snapshot, parse_result, resolve_selector
+from herdr_talkback.logic_monitor import (LogicalPaneMonitor, normalize_snapshot, parse_result,
+                                          resolve_selector, trim_snapshot)
 from herdr_talkback.logic_state import LogicStore
 from herdr_talkback.pane_actions import PaneActions
 from herdr_talkback.state import TalkbackState
@@ -29,7 +30,8 @@ class Client:
             self.reads.append(dict(params))
             if self.read_hook:
                 self.read_hook(pane, params)
-            return {'read': {'text': self.inputs[pane] if params.get('format') == 'ansi' else self.text[pane]}}
+            return {'read': {'text': (self.text[pane] + '\n\n' + self.inputs[pane])
+                                     if params.get('format') == 'ansi' else self.text[pane]}}
         assert method == 'pane.send_input'
         self.sent.append((pane, params['text']))
         return {}
@@ -254,3 +256,56 @@ def test_unknown_continue_is_not_retried(rig):
         assert len(delivery.sent) == 1
         assert store.attempts()[0]['outcome'] == 'uncertain'
     asyncio.run(scenario())
+
+
+def test_snapshot_reads_ansi_and_strips_ghost_prompt(rig):
+    engine, store, client, delivery, clock = rig
+    client.inputs['p1'] = '\u276f\xa0\x1b[0m\x1b[2mcontinue\x1b[0m'
+    text = asyncio.run(engine._snapshot('p1'))
+    assert 'continue' not in text
+    assert 'Next I can write tests.' in text
+
+
+def test_trim_snapshot_keeps_last_codex_bullet_block():
+    text = "› [lead] ping\n\n• 第一段结论\n  细节\n\n• 最后一段\n  还带一行"
+    trimmed = trim_snapshot(text)
+    assert trimmed.startswith("• 最后一段")
+    assert "第一段结论" not in trimmed
+
+
+def test_trim_snapshot_keeps_last_claude_bullet_block():
+    text = "❯ 用户消息\n\n● 旧消息\n\n● 最新消息\n  ⎿ 工具结果"
+    trimmed = trim_snapshot(text)
+    assert trimmed.startswith("● 最新消息")
+    assert "旧消息" not in trimmed
+
+
+def test_trim_snapshot_leaves_screen_when_no_bullet_block():
+    text = "只有普通输出\n没有消息标记"
+    assert trim_snapshot(text) == text
+
+
+def test_trim_snapshot_ignores_indented_bullets():
+    text = "● 本轮消息\n  • 缩进子项\n  结尾"
+    assert trim_snapshot(text) == text
+
+
+def test_target_snapshot_is_trimmed_but_monitor_snapshot_is_not(rig):
+    engine, store, client, delivery, clock = rig
+    client.text['p1'] = "历史结论\n\n• 最后一段结论"
+    assert asyncio.run(engine._snapshot('p1', trim=True)).startswith("• 最后一段结论")
+    assert "历史结论" in asyncio.run(engine._snapshot('p1'))
+
+
+def test_trim_snapshot_skips_codex_tool_call_lines():
+    text = ("• 结论一段\n\n• Ran mvn -q test\n  └ BUILD SUCCESS\n\n"
+            "• Explored\n  └ Read foo.java")
+    trimmed = trim_snapshot(text)
+    assert trimmed.startswith("• 结论一段")
+
+
+def test_trim_snapshot_skips_claude_tool_call_lines():
+    text = ("● 结论一段\n\n● Update(src/a.py)\n  1 line changed\n\n"
+            "● Read(src/b.py)")
+    trimmed = trim_snapshot(text)
+    assert trimmed.startswith("● 结论一段")
