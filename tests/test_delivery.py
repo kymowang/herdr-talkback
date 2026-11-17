@@ -670,7 +670,8 @@ async def _delivery_catches_message_that_appears_after_initial_empty_verify_read
 
     assert result.delivered is True
     assert result.reason == "residue flushed"
-    assert sleeper.delays == [0.25, 0.25]
+    # One poll catches the late draft; the flush read already sees the cleared composer.
+    assert sleeper.delays == [0.25]
     assert client.requests.count(("pane.send_input", {"pane_id": "p-back", "text": "", "keys": ["enter"]})) == 1
     assert notifier.notifications == [
         (
@@ -1005,5 +1006,21 @@ def test_delivery_flushes_folded_multiline_draft_instead_of_confirming(tmp_path)
         sends = [params for method, params in client.requests if method == "pane.send_input"]
         assert sends[0] == {"pane_id": "p-back", "text": message, "keys": ["enter"]}
         assert sends[-1] == {"pane_id": "p-back", "text": "", "keys": ["enter"]}
+
+    asyncio.run(scenario())
+
+
+def test_flush_waits_for_composer_repaint_before_failing(tmp_path):
+    async def scenario():
+        message = "[lead→dev-back] ping\n第二行\n第三行"
+        folded = "❯ [[lead→dev-… +2L]"
+        client = FakeClient([EMPTY_PROMPT, folded, folded, EMPTY_PROMPT])
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+        sleeper = FakeSleeper()
+        result = await DeliveryService(client, FakeRegistry(), state, sleep=sleeper.sleep).deliver(
+            parse_message(message, ROLES, ALIASES))
+        assert result.delivered
+        assert result.reason == "residue flushed"
 
     asyncio.run(scenario())

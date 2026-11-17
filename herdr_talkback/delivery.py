@@ -286,8 +286,20 @@ class DeliveryService:
         self, message_id: str, pane_id: str, expected_message: str, attempt: int
     ) -> DeliveryResult:
         await self.client.request("pane.send_input", {"pane_id": pane_id, "text": "", "keys": ["enter"]})
-        verified_after_flush = await self._verify(pane_id, expected_message)
-        if verified_after_flush == "delivered":
+        # A folded draft clears only after the CLI repaints the composer, so a
+        # single immediate read reports residue that is already being submitted.
+        deadline_seconds = max(self.verify_timeout_ms, 1000) / 1000
+        waited = 0.0
+        raw = await self._read_input(pane_id)
+        state = inspect_input(raw, expected_message, allow_transformed_residue=True)
+        # Only a folded draft needs the extra wait; plain visible residue is
+        # reported immediately so a stuck draft still fails fast.
+        while state.kind == "residue" and is_folded_paste_block(raw) and waited < deadline_seconds:
+            await self.sleep(self.verify_poll_interval_seconds)
+            waited += self.verify_poll_interval_seconds
+            raw = await self._read_input(pane_id)
+            state = inspect_input(raw, expected_message, allow_transformed_residue=True)
+        if state.kind in {"empty", "submitted"}:
             self._update_message_state(message_id, MessageState.DELIVERED, "residue flushed")
             return DeliveryResult(True, "residue flushed", attempt)
 
