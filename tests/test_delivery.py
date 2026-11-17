@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -70,9 +71,15 @@ OCCUPIED_PROMPT = "❯ \x1b[38;2;255;255;255mhalf typed\x1b[0m"
 
 
 class FakeRegistry:
+    agent = "cmd"
+
     def resolve_pane(self, role):
         assert role == "dev-back"
         return "p-back"
+
+    def get_agent(self, role):
+        assert role == "dev-back"
+        return SimpleNamespace(agent=self.agent)
 
 
 class FakeClient:

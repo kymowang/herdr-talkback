@@ -334,16 +334,19 @@ def test_folded_multiline_draft_matching_expected_is_residue():
     message = "[lead2→lead3] 收到第三轮。请继续\n第二行\n第三行"
     screen = "❯ \x1b[38;2;255;255;255m[[lead2→lea… +2L]\x1b[0m"
 
-    state = inspect_input(screen, expected_message=message)
+    state = inspect_input(screen, expected_message=message, agent="cmd")
 
     assert state.kind == "residue"
     assert state.contains_expected_message is True
+    # Other agents never get the residue interpretation for folded drafts.
+    assert inspect_input(screen, expected_message=message).kind == "occupied"
+    assert inspect_input(screen, expected_message=message, agent="codex").kind == "occupied"
 
 
-def test_folded_draft_with_other_line_count_is_occupied():
-    message = "[lead2→lead3] 收到第三轮。请继续\n第二行"  # 2 lines -> +1L
+def test_folded_draft_with_fewer_lines_than_message_is_occupied():
+    message = "[lead2→lead3] 收到第三轮。请继续\n第二行\n第三行\n第四行"  # 4 lines -> at least +3L
 
-    state = inspect_input("❯ [[lead2→lea… +2L]", expected_message=message)
+    state = inspect_input("❯ [[lead2→lea… +1L]", expected_message=message)
 
     assert state.kind == "occupied"
 
@@ -352,5 +355,37 @@ def test_folded_draft_with_short_prefix_is_occupied():
     message = "[a] x\n第二行"
 
     state = inspect_input("❯ [[a] x… +1L]", expected_message=message)
+
+    assert state.kind == "occupied"
+
+
+def test_folded_draft_wrapped_opening_line_is_residue():
+    # The CLI counts rendered lines, so soft wrapping makes the marker larger
+    # than the logical newline count.
+    message = "[lead2→lead3] " + "收到。按用户已授权的完整升级链继续：" + "x" * 600 + "\n回执说明"
+    screen = "❯ [[lead2→lea… +2L]"
+
+    state = inspect_input(screen, expected_message=message, agent="cmd")
+
+    assert state.kind == "residue"
+    assert state.contains_expected_message is True
+
+
+def test_head_truncated_long_opening_line_is_residue():
+    message = "[lead2→lead3] 收到。按用户已授权的完整升级链继续：" + "x" * 600 + "\n回执说明"
+    head = message.split("\n")[0][:80]
+
+    state = inspect_input("❯ " + head, expected_message=message,
+                          allow_transformed_residue=True, agent="cmd")
+
+    assert state.kind == "residue"
+    assert state.contains_expected_message is True
+    assert inspect_input("❯ " + head, expected_message=message).kind == "occupied"
+
+
+def test_short_visible_head_of_expected_message_stays_occupied():
+    message = "[lead2→lead3] 收到。按用户已授权的完整升级链继续：" + "x" * 600
+
+    state = inspect_input("❯ [lead2→lea", expected_message=message)
 
     assert state.kind == "occupied"

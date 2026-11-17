@@ -18,6 +18,9 @@ CODEX_PASTE_BLOCK_RE = re.compile(r"\[Pasted Content [1-9]\d* chars\]")
 FOLDED_PASTE_RE = re.compile(r"^\[(.*?)\u2026\s*\+\s*(\d+)\s*L\]$")
 FOLDED_PASTE_MARKER_RE = re.compile(r"\u2026\s*\+\s*\d+\s*L\]")
 FOLDED_PASTE_MIN_PREFIX = 8
+# Only agents observed to fold drafts in the composer get the residue
+# interpretation; for anything else a folded block is merely occupied.
+FOLDING_AGENTS = ("cmd",)
 IMAGE_PLACEHOLDER_RE = re.compile(r"\[Image #\d+\]\s*")
 PROMPT_MARKERS = ("❯", "›")
 PLACEHOLDER_TEXT = (
@@ -41,6 +44,7 @@ def inspect_input(
     expected_message: str,
     allow_paste_block_residue: bool = False,
     allow_transformed_residue: bool = False,
+    agent: Optional[str] = None,
 ) -> InputState:
     opencode = _inspect_opencode(ansi_text, expected_message)
     if opencode is not None:
@@ -74,7 +78,8 @@ def inspect_input(
         # 折叠的多行草稿仍在 composer 里,既不是空输入也不算已提交:
         # 忙时 CLI 会把它留着,只有 Enter 才真正提交。误判为空会让发送前
         # 检查漏掉占用,也会让发送后校验假报 delivered。
-        if expected_message and _is_expected_folded_residue(visible, expected_message):
+        if (_supports_folded_drafts(agent) and expected_message
+                and _is_expected_folded_residue(visible, expected_message)):
             return InputState(
                 kind="residue",
                 text_after_prompt=visible,
@@ -95,6 +100,15 @@ def inspect_input(
             contains_expected_message=True,
         )
     if allow_paste_block_residue and _is_expected_multiline_paste_block(visible, expected_message):
+        return InputState(
+            kind="residue",
+            text_after_prompt=visible,
+            contains_expected_message=True,
+        )
+    if (allow_transformed_residue and _supports_folded_drafts(agent)
+            and _is_expected_head_truncated_residue(visible, expected_message)):
+        # A long opening line is often rendered without the fold marker, so the
+        # composer shows only a head of our own message.
         return InputState(
             kind="residue",
             text_after_prompt=visible,
@@ -403,15 +417,35 @@ def _is_expected_folded_residue(visible: str, expected_message: str) -> bool:
     if len(prefix) < FOLDED_PASTE_MIN_PREFIX:
         return False
     lines = expected_message.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    # The folded marker counts lines beyond the first; a mismatch means this
-    # draft belongs to a different message and pressing Enter would submit it.
-    if extra_lines != max(0, len(lines) - 1):
+    # The marker counts rendered lines beyond the first, so soft wrapping of a
+    # long opening line makes it larger than the logical newline count. A draft
+    # with fewer lines than the message cannot be the same message.
+    if extra_lines < max(0, len(lines) - 1):
         return False
     expected = _normalize_visible(expected_message)
     return bool(
         expected
         and (expected.startswith(prefix) or _compact_visible(expected).startswith(_compact_visible(prefix)))
     )
+
+
+HEAD_TRUNCATED_MIN = 24
+
+
+def _is_expected_head_truncated_residue(visible: str, expected_message: str) -> bool:
+    expected = _normalize_visible(expected_message)
+    return bool(
+        expected
+        and len(visible) >= HEAD_TRUNCATED_MIN
+        and len(expected) > len(visible)
+        and expected.startswith(visible)
+    )
+
+
+def _supports_folded_drafts(agent: Optional[str]) -> bool:
+    if not agent:
+        return False
+    return agent.split()[0].split(".")[0].lower() in FOLDING_AGENTS
 
 
 def is_folded_paste_block(text: str) -> bool:
