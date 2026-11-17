@@ -4,11 +4,14 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import unicodedata
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -56,6 +59,25 @@ def build_parser() -> argparse.ArgumentParser:
     tls.add_argument('--directory', type=Path, required=True)
     tls.add_argument('--host', action='append', required=True)
     tls.add_argument('--force', action='store_true')
+    peer_input = peer_sub.add_parser('input', help='Inspect a peer pane input')
+    peer_input.add_argument('node_id')
+    peer_input.add_argument('pane')
+    peer_submit = peer_sub.add_parser('submit', help='Submit a previously inspected peer pane input')
+    peer_submit.add_argument('node_id')
+    peer_submit.add_argument('pane')
+    peer_submit.add_argument('--pane-id', required=True)
+    peer_submit.add_argument('--screen-sha256', required=True)
+    peer_submit.add_argument('--request-id', help='Idempotency ID for checking or repeating a request')
+    peer_submit.add_argument('--reject-folded', action='store_true', help='Refuse submit when folded text cannot be verified')
+    peer_control_status = peer_sub.add_parser('submit-status', help='Check a peer submit request')
+    peer_control_status.add_argument('node_id')
+    peer_control_status.add_argument('request_id')
+    peer_update = peer_sub.add_parser('update', help='Update a peer Talkback installation from GitHub')
+    peer_update.add_argument('node_id')
+    peer_update.add_argument('--request-id', help='Idempotency ID for an update request')
+    peer_update_status = peer_sub.add_parser('update-status', help='Check a peer update request')
+    peer_update_status.add_argument('node_id')
+    peer_update_status.add_argument('request_id')
     peers = sub.add_parser('peers', help='Inspect configured network peers')
     peers_sub = peers.add_subparsers(dest='peers_command', required=True)
     peers_list = peers_sub.add_parser('list')
@@ -147,6 +169,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         if args.config is None:
             args.config = _discover_plugin_config()
     elif args.command == 'pane' and args.pane_command == 'identity' and args.config is None:
+        args.config = _discover_plugin_config()
+    elif args.command == 'peer' and args.peer_command in ('input', 'submit', 'submit-status', 'update', 'update-status') and args.config is None:
         args.config = _discover_plugin_config()
     try:
         return asyncio.run(_main_async(args))
@@ -290,7 +314,7 @@ async def _main_async(args) -> int:
         except (ValueError, OSError, RuntimeError) as exc:
             print(json.dumps({'ok': False, 'error': str(exc)}, ensure_ascii=False))
             return 1
-    if args.command == 'peer':
+    if args.command == 'peer' and args.peer_command == 'init-tls':
         try:
             from .certificates import provision
             paths = provision(args.directory, args.host, args.force)
@@ -301,6 +325,41 @@ async def _main_async(args) -> int:
         for path in paths:
             print(path)
         return 0
+
+    if args.command == 'peer' and args.peer_command in ('input', 'submit', 'submit-status', 'update', 'update-status'):
+        from .peer_http import PeerClient
+        cfg = load_config(args.config)
+        request_id = (args.request_id or 'req_' + uuid.uuid4().hex) if args.peer_command in ('submit', 'update') else None
+        if request_id:
+            print('request_id: ' + request_id, file=sys.stderr, flush=True)
+        try:
+            if args.node_id not in cfg.peers:
+                raise ValueError('peer not configured: ' + args.node_id)
+            if args.peer_command in ('input', 'submit') and not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', args.pane):
+                raise ValueError('invalid remote pane name or ID')
+            client = PeerClient(cfg.core_node_id, cfg.peers[args.node_id])
+            if args.peer_command == 'input':
+                response = await client.request('GET', f'/v1/panes/{args.pane}/input')
+            elif args.peer_command == 'submit':
+                payload = {'pane_id': args.pane_id, 'screen_sha256': args.screen_sha256, 'request_id': request_id}
+                if args.reject_folded:
+                    payload['allow_folded'] = False
+                response = await client.request('POST', f'/v1/panes/{args.pane}/submit', payload)
+            elif args.peer_command == 'update':
+                response = await client.request('POST', '/v1/install/update', {'request_id': request_id})
+            elif args.peer_command == 'submit-status':
+                if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', args.request_id):
+                    raise ValueError('invalid request ID')
+                response = await client.request('GET', f'/v1/control/requests/{args.request_id}')
+            else:
+                if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', args.request_id):
+                    raise ValueError('invalid request ID')
+                response = await client.request('GET', f'/v1/install/updates/{args.request_id}')
+            print(json.dumps(response, ensure_ascii=False))
+            return 0 if response.get('state') not in ('unknown', 'failed') else 1
+        except Exception as exc:
+            print(json.dumps({'ok': False, 'error': str(exc), 'request_id': request_id}, ensure_ascii=False))
+            return 1
 
     if args.command == 'message':
         from .peer_state import PeerStore

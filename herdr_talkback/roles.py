@@ -67,5 +67,8 @@ class RoleRegistry:
     def get_pane(self, pane_id: str) -> Optional[AgentInfo]:
         return self._by_pane_info.get(pane_id)
 
+    def panes_named(self, name: str) -> tuple[AgentInfo, ...]:
+        return tuple(info for info in self._by_pane_info.values() if info.name == name)
+
     def snapshot(self) -> dict[str, AgentInfo]:
         return dict(self._by_role)

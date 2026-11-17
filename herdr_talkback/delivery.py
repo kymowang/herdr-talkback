@@ -35,6 +35,7 @@ class DeliveryService:
         stale_input_seconds: float = 0,
         stale_poll_seconds: float = 30,
         clock: Callable[[], float] = time.monotonic,
+        admission_gate=None,
     ) -> None:
         self.client = client
         self.registry = registry
@@ -52,6 +53,7 @@ class DeliveryService:
         self.stale_input_seconds = stale_input_seconds
         self.stale_poll_seconds = stale_poll_seconds
         self.clock = clock
+        self.admission_gate = admission_gate
 
     async def deliver(self, message: RoutedMessage) -> DeliveryResult:
         pane_id = self.registry.resolve_pane(message.resolved_target)
@@ -154,6 +156,14 @@ class DeliveryService:
         return DeliveryResult(False, "delivery ambiguous", self.max_attempts)
 
     async def send_control(self, pane_id: str, text: str, *, strict: bool = False) -> DeliveryResult:
+        if self.admission_gate is not None:
+            async with self.admission_gate.lock:
+                if self.admission_gate.paused:
+                    return DeliveryResult(False, 'Talkback is updating', 0)
+                return await self._send_control_unlocked(pane_id, text, strict=strict)
+        return await self._send_control_unlocked(pane_id, text, strict=strict)
+
+    async def _send_control_unlocked(self, pane_id: str, text: str, *, strict: bool = False) -> DeliveryResult:
         before = await self._read_input(pane_id)
         before_state = inspect_input(before, text)
         if strict and before_state.kind != "empty":

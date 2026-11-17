@@ -270,6 +270,23 @@ herdr-talkback --config "$CFG" pane import '<identity-json>'
 
 `register-all` 按项报告未命名或冲突的 Pane，不覆盖已有登记。`whoami` 在发送端登记目标，接收端认证发送节点后登记发送方并投递消息。查询返回的消息 ID 以确认最终状态。双方都需要新版 Talkback 及已配置的可信 peer。`identity` 自动查找当前 Herdr 插件配置，并使用其明确的监听地址和端口；监听地址是通配地址或仅本机可访问时，用 `--url` 显式指定可访问的 HTTPS 地址。身份卡不包含凭据，也不自动创建 peer。身份卡返回本机公开证书路径和按 peer 区分的 token 路径，路径只在发送机器上有意义；需要另行通过可信方式交换文件。首次生成插件配置时使用本机 hostname 作为节点 ID；既有配置不会自动改名。
 
+### 远程服务管理
+
+接收端可在特定 peer 的配置中加入 `allow_remote_control = true` 并重启 Talkback，允许该 peer 读取输入框、提交输入和更新安装。默认为关闭。使用独立 token 区分 peer；多个 peer 共享 token 时不能仅靠节点名区分其身份。
+
+```bash
+herdr-talkback peer input pc-54 arc-bus
+# 使用上面返回的 pane_id 和 screen_sha256：
+herdr-talkback peer submit pc-54 arc-bus --pane-id <pane-id> --screen-sha256 <hash>
+herdr-talkback peer submit-status pc-54 <request-id>
+herdr-talkback peer update pc-54
+herdr-talkback peer update-status pc-54 <request-id>
+```
+
+远程检查只读当前可见画面，`visible_excerpt` 可包含输入区后的界面信息；折叠的正文无法直接读取。提交前必须核对返回的输入；画面或 Pane 身份改变会被拒绝。画面校验和发送按键之间不是原子操作，仍存在并发输入竞态。折叠内容默认允许提交，但只能校验可见画面，无法确认折叠正文是否变化；可使用 `--reject-folded` 拒绝此类提交。按键接受不代表已被 AI 处理。每次提交保存唯一请求 ID；超时时查询原 ID，不要盲目使用新 ID 重试。
+
+`peer update` 仅从固定的 GitHub 项目构建并更新远程服务所使用的 Python 安装，不修改远程 Git 工作树、用户配置和凭据。安装后自动重启服务；有消息正在投递时不切换。状态为 `completed` 表示服务已恢复；`failed` 需检查状态。该操作不更新 Herdr 插件清单的登记元数据或已安装的 Skill；如清单变更则需另行更新。对端需先安装并启动支持该功能的版本。
+
 ## 开发验证
 
 ## 跨主机通信（HTTPS 短连接）

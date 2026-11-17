@@ -26,6 +26,12 @@ title = "Show Talkback message queue"
 contexts = ["workspace"]
 command = ["herdr-talkback-plugin", "queue"]
 
+[[actions]]
+id = "update-worker"
+title = "Run a queued Talkback installation update"
+contexts = ["workspace"]
+command = ["herdr-talkback-plugin", "update-worker"]
+
 [[panes]]
 id = "service"
 title = "Talkback service"

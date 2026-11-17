@@ -1035,3 +1035,69 @@ def test_identity_respects_explicit_config(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, '_main_async', run)
     assert cli.main(['--config', str(selected), 'pane', 'identity', 'monitor']) == 0
     assert captured == [selected]
+
+
+def test_peer_input_cli_invokes_authenticated_read(monkeypatch, tmp_path, capsys):
+    import herdr_talkback.peer_http as peer_http
+    cfg = SimpleNamespace(core_node_id='local', peers={'remote': object()})
+    calls = []
+    class Client:
+        def __init__(self, node, peer): assert node == 'local'
+        async def request(self, method, path, *args):
+            calls.append((method,path))
+            return {'node_id':'remote','input':{'kind':'occupied','text':'draft'}}
+    monkeypatch.setattr(cli, 'load_config', lambda path: cfg)
+    monkeypatch.setattr(peer_http, 'PeerClient', Client)
+    assert asyncio.run(cli._main_async(build_parser().parse_args(['peer','input','remote','worker']))) == 0
+    assert calls == [('GET','/v1/panes/worker/input')]
+    assert json.loads(capsys.readouterr().out)['input']['text'] == 'draft'
+
+
+def test_peer_submit_cli_carries_snapshot_and_request_identity(monkeypatch, capsys):
+    import herdr_talkback.peer_http as peer_http
+    cfg = SimpleNamespace(core_node_id='local', peers={'remote': object()})
+    calls = []
+    class Client:
+        def __init__(self, node, peer): pass
+        async def request(self, method, path, payload):
+            calls.append((method,path,payload))
+            return {'state':'submitted','request_id':payload['request_id']}
+    monkeypatch.setattr(cli, 'load_config', lambda path: cfg)
+    monkeypatch.setattr(peer_http, 'PeerClient', Client)
+    args = build_parser().parse_args(['peer','submit','remote','worker','--pane-id','pane-1',
+                                      '--screen-sha256','a'*64,'--request-id','req_123'])
+    assert asyncio.run(cli._main_async(args)) == 0
+    assert calls == [('POST','/v1/panes/worker/submit',{'pane_id':'pane-1','screen_sha256':'a'*64,'request_id':'req_123'})]
+    assert json.loads(capsys.readouterr().out)['state'] == 'submitted'
+
+
+def test_peer_update_cli_sends_unique_request_and_reads_status(monkeypatch, capsys):
+    import herdr_talkback.peer_http as peer_http
+    cfg = SimpleNamespace(core_node_id='local', peers={'remote': object()})
+    calls=[]
+    class Client:
+        def __init__(self,node,peer): pass
+        async def request(self,method,path,payload=None):
+            calls.append((method,path,payload))
+            return {'state':'queued','request_id':'update_123'}
+    monkeypatch.setattr(cli,'load_config',lambda path:cfg)
+    monkeypatch.setattr(peer_http,'PeerClient',Client)
+    args=build_parser().parse_args(['peer','update','remote','--request-id','update_123'])
+    assert asyncio.run(cli._main_async(args)) == 0
+    args=build_parser().parse_args(['peer','update-status','remote','update_123'])
+    assert asyncio.run(cli._main_async(args)) == 0
+    assert calls == [('POST','/v1/install/update',{'request_id':'update_123'}),
+                     ('GET','/v1/install/updates/update_123',None)]
+
+
+def test_peer_update_status_returns_nonzero_for_failed_job(monkeypatch, capsys):
+    import herdr_talkback.peer_http as peer_http
+    cfg=SimpleNamespace(core_node_id='local', peers={'remote':object()})
+    class Client:
+        def __init__(self,node,peer): pass
+        async def request(self,method,path): return {'state':'failed','detail':'update failed'}
+    monkeypatch.setattr(cli,'load_config',lambda path:cfg)
+    monkeypatch.setattr(peer_http,'PeerClient',Client)
+    args=build_parser().parse_args(['peer','update-status','remote','update_123'])
+    assert asyncio.run(cli._main_async(args)) == 1
+    assert json.loads(capsys.readouterr().out)['state'] == 'failed'

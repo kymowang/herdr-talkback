@@ -120,7 +120,7 @@ def _inspect_opencode(ansi_text, expected):
     if not borders:
         return None
     index, border = borders[-1]
-    if index == 0 or not re.match(r'^\s*┃\s+(?:(?:Build|Plan)\s*·|Sisyphus\s+-\s+Ultraworker\b.*·.*OpenCode)', lines[index - 1]):
+    if index == 0 or not re.match(r'^\s*┃\s+(?:(?:Build|Plan)(?:\s+auto)?\s*·|Sisyphus\s+-\s+Ultraworker\b.*·.*OpenCode)', lines[index - 1]):
         return None
     trailing = lines[index + 1:]
     if not trailing or 'ctrl+p' not in trailing[0] or 'commands' not in trailing[0]:

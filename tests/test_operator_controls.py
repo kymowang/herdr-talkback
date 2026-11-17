@@ -286,3 +286,29 @@ def test_identity_import_accepts_original_version_one_card(tmp_path):
     config = SimpleNamespace(core_node_id='local', peers={'remote': SimpleNamespace(url='https://192.0.2.1:18765')}, aliases={})
     card = {'version': 1, 'node': 'remote', 'pane': 'worker', 'url': 'https://192.0.2.1:18765'}
     assert import_identity_card(OperatorStore(state), config, card, set()) == 'registered'
+
+
+def test_update_quiescence_blocks_and_then_allows_local_admission(tmp_path):
+    from herdr_talkback.admission import AdmissionGate
+    async def scenario():
+        state = TalkbackState(tmp_path/'state.db'); state.init()
+        cfg = SimpleNamespace(core_node_id='local', peers={}, roles=(), aliases={}, message_rules=())
+        class Registry:
+            async def refresh(self): pass
+            def snapshot(self): return {}
+            def resolve_pane(self,name): return 'p1'
+        class Dispatcher:
+            def __init__(self): self.wakes = []
+            def wake(self, endpoint): self.wakes.append(endpoint)
+        gate = AdmissionGate()
+        dispatcher = Dispatcher()
+        router = DaemonMessageRouter(cfg, Registry(), dispatcher, state=state, admission_gate=gate)
+        marker = str(state.path.resolve())
+        assert (await router.handle({'type':'update_quiesce','paused':True,'state_path':marker}))['ok']
+        blocked = await router.handle({'type':'send','message':'[sender->target] hello'})
+        assert not blocked['ok'] and 'updat' in blocked['error']
+        state.list_dispatchable_endpoints = lambda: ['local/pending']
+        assert (await router.handle({'type':'update_quiesce','paused':False,'state_path':marker}))['ok']
+        assert dispatcher.wakes == ['local/pending']
+        assert (await router.handle({'type':'send','message':'[sender->target] hello'}))['ok']
+    asyncio.run(scenario())

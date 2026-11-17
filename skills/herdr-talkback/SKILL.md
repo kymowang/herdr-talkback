@@ -104,6 +104,22 @@ herdr-talkback --config $cfg message status msg_实际消息ID --json
 
 Use `send --dry-run` to check routing without sending. `queued` and `accepted` do not prove delivery: query the returned message ID and report its actual state. `delivered` is the final delivery receipt; `waiting_endpoint` means the target is unavailable or unregistered; `failed` or `delivery_unknown` requires inspection before retrying, because the message may already be in or submitted to a pane. The configured unattended delivery fallback may submit an occupied input from any source after the entire visible screen is unchanged for `[delivery].stale_input_seconds` (default 300 seconds) while a message is waiting. Set it to 0 to disable the fallback. It checks again before Enter, restarts timing on screen changes or service restart, skips folded drafts and unrecognized inputs, and continues pending delivery only after the input clears. Cross-host fallback runs on the receiving host. Do not manually submit a draft without user instruction. Registered aliases require daemon delivery; do not use `--direct` with them.
 
+## Remote service control
+
+Remote administration is opt-in per authenticated peer: on the receiving node, set `allow_remote_control = true` in the trusted sender's `[peers.<node>]` section and restart the service. It grants input inspection, submit, and installation update; use distinct peer tokens because shared tokens cannot distinguish peers securely. Both sides need a version supporting these commands.
+
+```text
+herdr-talkback peer input pc-54 arc-bus
+herdr-talkback peer submit pc-54 arc-bus --pane-id <pane-id> --screen-sha256 <hash>
+herdr-talkback peer submit-status pc-54 <request-id>
+herdr-talkback peer update pc-54
+herdr-talkback peer update-status pc-54 <request-id>
+```
+
+`input` reads only the currently visible screen and returns the input state, a visible excerpt, actual pane ID and a screen hash. Inspect it before manually submitting. `submit` refuses an empty, unknown, changed, or remapped input. Verification and key delivery are separate calls, so concurrent input can still race. Folded content is allowed by default but cannot be verified; explain this limitation before submitting. Use `--reject-folded` to refuse it. A submitted result means the key request was accepted, not that the agent processed the content. Submit and update operations use request IDs for deduplication: after a timeout query the original ID; never start a new request blindly.
+
+`peer update` builds and installs the Python package from the fixed GitHub repository, backs up the previous installation, refuses activation while messages are in progress, and restarts the remote Herdr-owned service. It does not modify any remote Git checkout, user configuration or credentials. The Herdr plugin manifest registration and installed skill are not updated by this command; update those separately if needed. Query update status and report failures or uncertain results; a remote target must already support this protocol.
+
 ## Logical monitoring
 
 ```text

@@ -17,6 +17,17 @@ def test_opencode_composer_excludes_sidebar(draft, expected):
     assert inspect_input(screen(draft), '').kind == expected
 
 
+@pytest.mark.parametrize('draft,expected', [('', 'empty'), ('user draft', 'occupied'), ('continue', 'residue')])
+def test_opencode_auto_mode_composer(draft, expected):
+    view = screen(draft).replace('Build ·', 'Build auto ·')
+    assert inspect_input(view, 'continue').kind == expected
+
+
+def test_opencode_auto_mode_still_rejects_overlay():
+    view = screen().replace('Build ·', 'Build auto ·')
+    assert inspect_input(view + '\nApproval required', '').kind == 'unknown'
+
+
 def test_opencode_expected_residue_and_partial_text():
     assert inspect_input(screen('continue'), 'continue').kind == 'residue'
     assert inspect_input(screen('contin'), 'continue').kind == 'occupied'

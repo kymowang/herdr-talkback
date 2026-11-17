@@ -15,7 +15,7 @@ import uuid
 
 def render_manifest(source, executable, entry):
     marker = '"herdr-talkback-plugin"'
-    if source.count(marker) != 5:
+    if source.count(marker) != 6:
         raise ValueError('unexpected plugin manifest: command entries not found')
     return source.replace(marker, json.dumps(str(executable), ensure_ascii=False) + ', ' +
                           json.dumps(str(entry), ensure_ascii=False))

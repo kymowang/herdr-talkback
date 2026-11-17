@@ -78,14 +78,78 @@ class PeerStore:
                     message_id text primary key, peer text not null, remote_state text,
                     remote_received_at real, attempts integer not null default 0,
                     next_attempt_at real not null default 0, last_error text not null default '');
+                create table if not exists peer_control_requests (
+                    peer text not null, request_id text not null, pane_id text not null,
+                    screen_sha256 text not null, state text not null,
+                    primary key(peer, request_id));
+                create table if not exists peer_update_jobs (
+                    peer text not null, request_id text not null, state text not null,
+                    detail text not null default '', updated_at real not null, service_pane_id text not null default '',
+                    primary key(peer, request_id));
                 create trigger if not exists peer_message_receipt_update after update of state, reason on messages
                 begin
                     update peer_receipts set state=new.state, reason=new.reason, updated_at=new.updated_at
                     where message_id=new.message_id;
                 end;
             ''')
+            columns = {row['name'] for row in db.execute('pragma table_info(peer_update_jobs)')}
+            if 'service_pane_id' not in columns:
+                db.execute("alter table peer_update_jobs add column service_pane_id text not null default ''")
             db.execute("insert or ignore into peer_meta values ('instance_id', ?)", (uuid.uuid4().hex,))
             self.instance_id = db.execute("select value from peer_meta where key='instance_id'").fetchone()[0]
+
+    def control_state(self, peer, request_id):
+        with self.state._connect() as db:
+            row = db.execute('select pane_id,screen_sha256,state from peer_control_requests where peer=? and request_id=?',
+                             (peer, request_id)).fetchone()
+        return dict(row) if row else None
+
+    def start_control(self, peer, request_id, pane_id, fingerprint):
+        with self.state._connect() as db:
+            db.execute('insert into peer_control_requests values (?,?,?,?,?)',
+                       (peer, request_id, pane_id, fingerprint, 'unknown'))
+
+    def finish_control(self, peer, request_id):
+        with self.state._connect() as db:
+            db.execute("update peer_control_requests set state='submitted' where peer=? and request_id=?",
+                       (peer, request_id))
+
+    def update_job(self, peer, request_id):
+        with self.state._connect() as db:
+            row = db.execute('select request_id,state,detail,updated_at from peer_update_jobs where peer=? and request_id=?',
+                             (peer, request_id)).fetchone()
+        return dict(row) if row else None
+
+    def start_update(self, peer, request_id, service_pane_id=''):
+        with self.state._connect() as db:
+            db.execute('begin immediate')
+            current = db.execute("select 1 from peer_update_jobs where state in ('queued','preparing','activating','restarting') limit 1").fetchone()
+            if current:
+                existing = db.execute('select 1 from peer_update_jobs where peer=? and request_id=?', (peer, request_id)).fetchone()
+                if not existing:
+                    raise PeerConflict('another installation update is already running')
+            return db.execute("insert or ignore into peer_update_jobs (peer,request_id,state,detail,updated_at,service_pane_id) values (?,?,'queued','',?,?)",
+                              (peer, request_id, time.time(), service_pane_id)).rowcount == 1
+
+    def claim_update(self):
+        with self.state._connect() as db:
+            db.execute('begin immediate')
+            row = db.execute("select peer,request_id,service_pane_id from peer_update_jobs where state='queued' order by updated_at limit 1").fetchone()
+            if row is None:
+                return None
+            db.execute("update peer_update_jobs set state='preparing',updated_at=? where peer=? and request_id=?",
+                       (time.time(), row['peer'], row['request_id']))
+            return dict(row)
+
+    def set_update(self, peer, request_id, state, detail=''):
+        with self.state._connect() as db:
+            db.execute('update peer_update_jobs set state=?,detail=?,updated_at=? where peer=? and request_id=?',
+                       (state, detail[:512], time.time(), peer, request_id))
+
+    def fail_queued_update(self, peer, request_id, detail):
+        with self.state._connect() as db:
+            db.execute("update peer_update_jobs set state='failed',detail=?,updated_at=? where peer=? and request_id=? and state='queued'",
+                       (detail[:512], time.time(), peer, request_id))
 
     def receive(self, peer, envelope, capacity=10000, *, registration_config=None, local_names=()):
         source, target = validate_envelope(peer, self.state.local_node_id, envelope)

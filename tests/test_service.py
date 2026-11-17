@@ -523,7 +523,7 @@ def _install_minimal_service_fakes(monkeypatch, events):
             pass
 
     class FakeDispatcher:
-        def __init__(self, state, registry, adapters):
+        def __init__(self, state, registry, adapters, admission_gate=None):
             self.adapters = adapters
 
         async def recover(self):

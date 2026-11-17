@@ -28,6 +28,7 @@ class PeerConfig:
     url: str
     ca_file: Path
     token_file: Path
+    allow_remote_control: bool = False
 
     def token(self):
         token = self.token_file.read_text(encoding='ascii').strip()
@@ -81,7 +82,11 @@ def load_network(raw, config_path, node_id):
             valid = False
         if not valid:
             raise ValueError('peer URL must be an HTTPS origin without credentials, path, query or fragment')
-        peers[peer_id] = PeerConfig(peer_id, url.rstrip('/'), path(peer.get('ca_file')), path(peer.get('token_file')))
+        allow_remote_control = peer.get('allow_remote_control', False)
+        if type(allow_remote_control) is not bool:
+            raise ValueError('peer allow_remote_control must be boolean')
+        peers[peer_id] = PeerConfig(peer_id, url.rstrip('/'), path(peer.get('ca_file')),
+                                    path(peer.get('token_file')), allow_remote_control)
     if enabled:
         if not network.cert_file or not network.key_file:
             raise ValueError('enabled network requires cert_file and key_file')

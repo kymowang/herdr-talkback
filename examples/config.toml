@@ -8,6 +8,10 @@ verify_timeout_ms = 5000
 # Submit unchanged visible occupied input after 5 minutes; 0 disables this fallback.
 stale_input_seconds = 300
 
+# Remote administration is disabled unless explicitly enabled for each peer.
+# Add `allow_remote_control = true` to a trusted [peers.<node>] entry to allow
+# that peer to inspect pane input, submit it, and update the Talkback installation.
+
 [monitor]
 unknown_threshold_seconds = 60
 continue_cooldown_seconds = 120
@@ -168,3 +172,4 @@ listen_port = 18765
 # url = "https://192.168.90.18:18765"
 # ca_file = "tls/openclaw.crt"
 # token_file = "tls/pair.token"
+# allow_remote_control = false  # Explicitly enable only for a fully trusted peer.

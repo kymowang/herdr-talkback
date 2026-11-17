@@ -134,3 +134,167 @@ def test_https_whoami_admission_registers_sender_and_enqueues_message(tmp_path):
             assert controls.pane('monitor') == 'sender/monitor'
             assert wakes == ['receiver/agent']
     asyncio.run(scenario())
+
+
+def test_peer_can_inspect_visible_local_pane_input(tmp_path):
+    from herdr_talkback.peer_http import PeerServer, PeerClient
+    async def scenario():
+        cfg, store = make_node(tmp_path, 'receiver', 'sender')
+        cfg.peers['sender'] = replace(cfg.peers['sender'], allow_remote_control=True)
+        requests = []
+        class Client:
+            async def request(self, method, params):
+                requests.append((method, params))
+                return {'read': {'text': '\u203a waiting for instructions'}}
+        class Registry:
+            client = Client()
+            async def refresh(self): pass
+            def resolve_pane(self, name):
+                assert name == 'worker'
+                return 'pane-1'
+        async with PeerServer(cfg, store, SimpleNamespace(wake=lambda e: None), Registry()) as server:
+            peer = replace(cfg.peers['sender'], node_id='receiver', url=f'https://127.0.0.1:{server.bound_port}')
+            result = await PeerClient('sender', peer).request('GET', '/v1/panes/worker/input')
+            assert result['input']['kind'] == 'occupied'
+            assert result['input']['text'] == 'waiting for instructions'
+            assert requests == [('pane.read', {'pane_id': 'pane-1', 'source': 'visible', 'format': 'ansi'})]
+    asyncio.run(scenario())
+
+
+def test_peer_submit_requires_matching_snapshot_and_is_idempotent(tmp_path):
+    from herdr_talkback.peer_http import PeerServer, PeerClient, PeerHTTPError
+    async def scenario():
+        cfg, store = make_node(tmp_path, 'receiver', 'sender')
+        cfg.peers['sender'] = replace(cfg.peers['sender'], allow_remote_control=True)
+        class Client:
+            screen = '\u203a user draft'
+            sends = 0
+            async def request(self, method, params):
+                if method == 'pane.read': return {'read': {'text': self.screen}}
+                assert method == 'pane.send_input' and params == {'pane_id':'pane-1', 'text':'', 'keys':['enter']}
+                self.sends += 1
+                return {'type':'ok'}
+        client = Client()
+        class Registry:
+            async def refresh(self): pass
+            def resolve_pane(self, name): return 'pane-1'
+        registry = Registry(); registry.client = client
+        async with PeerServer(cfg, store, SimpleNamespace(wake=lambda e: None), registry) as server:
+            peer = replace(cfg.peers['sender'], node_id='receiver', url=f'https://127.0.0.1:{server.bound_port}')
+            remote = PeerClient('sender', peer)
+            snap = await remote.request('GET', '/v1/panes/worker/input')
+            args = {'pane_id': snap['input']['pane_id'], 'screen_sha256': snap['input']['screen_sha256'], 'request_id':'req_123'}
+            client.screen = '\u203a changed draft'
+            with pytest.raises(PeerHTTPError) as exc:
+                await remote.request('POST', '/v1/panes/worker/submit', args)
+            assert exc.value.status == 409 and client.sends == 0
+            client.screen = '\u203a user draft'
+            result = await remote.request('POST', '/v1/panes/worker/submit', args)
+            assert result['state'] == 'submitted' and client.sends == 1
+            registry.resolve_pane = lambda name: (_ for _ in ()).throw(LookupError('pane closed'))
+            again = await remote.request('POST', '/v1/panes/worker/submit', args)
+            assert again['state'] == 'submitted' and client.sends == 1
+    asyncio.run(scenario())
+
+
+def test_peer_input_control_requires_explicit_permission(tmp_path):
+    from herdr_talkback.peer_http import PeerServer, PeerClient, PeerHTTPError
+    async def scenario():
+        cfg, store = make_node(tmp_path, 'receiver', 'sender')
+        async with PeerServer(cfg, store, SimpleNamespace(wake=lambda e: None), SimpleNamespace()) as server:
+            peer = replace(cfg.peers['sender'], node_id='receiver', url=f'https://127.0.0.1:{server.bound_port}')
+            with pytest.raises(PeerHTTPError) as exc:
+                await PeerClient('sender', peer).request('GET', '/v1/panes/worker/input')
+            assert exc.value.status == 403
+    asyncio.run(scenario())
+
+
+def test_peer_update_is_authorized_and_repeated_request_does_not_start_twice(tmp_path):
+    from herdr_talkback.peer_http import PeerServer, PeerClient
+    async def scenario():
+        cfg, store = make_node(tmp_path, 'receiver', 'sender')
+        cfg.peers['sender'] = replace(cfg.peers['sender'], allow_remote_control=True)
+        launches = []
+        def launch(peer, request_id): launches.append((peer, request_id))
+        async with PeerServer(cfg, store, SimpleNamespace(wake=lambda e: None), update_launcher=launch) as server:
+            peer = replace(cfg.peers['sender'], node_id='receiver', url=f'https://127.0.0.1:{server.bound_port}')
+            client = PeerClient('sender', peer)
+            first = await client.request('POST', '/v1/install/update', {'request_id':'update_123'})
+            second = await client.request('POST', '/v1/install/update', {'request_id':'update_123'})
+            status = await client.request('GET', '/v1/install/updates/update_123')
+            assert first['state'] == second['state'] == status['state'] == 'queued'
+            assert launches == [('sender','update_123')]
+    asyncio.run(scenario())
+
+
+def test_peer_submit_folded_input_allowed_by_default_and_can_be_rejected(tmp_path):
+    from herdr_talkback.peer_http import PeerServer, PeerClient, PeerHTTPError
+    async def scenario():
+        cfg, store = make_node(tmp_path, 'receiver', 'sender')
+        cfg.peers['sender'] = replace(cfg.peers['sender'], allow_remote_control=True)
+        class Client:
+            sends = 0
+            async def request(self, method, params):
+                if method == 'pane.read': return {'read': {'text': '\u203a [Pasted Content 1099 chars]'}}
+                self.sends += 1; return {'type':'ok'}
+        class Registry:
+            client = Client()
+            async def refresh(self): pass
+            def resolve_pane(self, name): return 'pane-1'
+        registry = Registry()
+        async with PeerServer(cfg, store, SimpleNamespace(wake=lambda e: None), registry) as server:
+            peer = replace(cfg.peers['sender'], node_id='receiver', url=f'https://127.0.0.1:{server.bound_port}')
+            client = PeerClient('sender', peer)
+            snapshot = (await client.request('GET','/v1/panes/worker/input'))['input']
+            assert snapshot['folded']
+            payload = {'pane_id':'pane-1','screen_sha256':snapshot['screen_sha256'],'request_id':'folded_1','allow_folded':False}
+            with pytest.raises(PeerHTTPError) as exc:
+                await client.request('POST','/v1/panes/worker/submit',payload)
+            assert exc.value.status == 409 and registry.client.sends == 0
+            del payload['allow_folded']
+            assert (await client.request('POST','/v1/panes/worker/submit',payload))['state'] == 'submitted'
+            assert registry.client.sends == 1
+    asyncio.run(scenario())
+
+
+def test_peer_submit_rejects_dim_codex_transcript_as_unknown(tmp_path):
+    from herdr_talkback.peer_http import PeerServer, PeerClient, PeerHTTPError
+    async def scenario():
+        cfg, store = make_node(tmp_path,'receiver','sender')
+        cfg.peers['sender'] = replace(cfg.peers['sender'],allow_remote_control=True)
+        class Client:
+            sends=0
+            async def request(self,method,params):
+                if method == 'pane.read': return {'read':{'text':'\x1b[2m\u203a already submitted\x1b[0m'}}
+                self.sends+=1; return {'type':'ok'}
+        class Registry:
+            client=Client()
+            async def refresh(self): pass
+            def resolve_pane(self,name): return 'pane-1'
+        registry=Registry()
+        async with PeerServer(cfg,store,SimpleNamespace(wake=lambda e:None),registry) as server:
+            peer=replace(cfg.peers['sender'],node_id='receiver',url=f'https://127.0.0.1:{server.bound_port}')
+            client=PeerClient('sender',peer)
+            snapshot=(await client.request('GET','/v1/panes/worker/input'))['input']
+            assert snapshot['kind']=='unknown'
+            with pytest.raises(PeerHTTPError) as exc:
+                await client.request('POST','/v1/panes/worker/submit',{'pane_id':'pane-1','screen_sha256':snapshot['screen_sha256'],'request_id':'dim_1'})
+            assert exc.value.status==409 and registry.client.sends==0
+    asyncio.run(scenario())
+
+
+def test_peer_message_admission_pauses_during_update_and_recovers(tmp_path):
+    from herdr_talkback.peer_http import PeerServer, PeerClient, PeerHTTPError
+    from herdr_talkback.admission import AdmissionGate
+    async def scenario():
+        cfg, store = make_node(tmp_path,'receiver','sender')
+        gate = AdmissionGate(paused=True); wakes=[]
+        async with PeerServer(cfg,store,SimpleNamespace(wake=wakes.append),admission_gate=gate) as server:
+            peer=replace(cfg.peers['sender'],node_id='receiver',url=f'https://127.0.0.1:{server.bound_port}')
+            client=PeerClient('sender',peer)
+            with pytest.raises(PeerHTTPError) as exc:
+                await client.request('POST','/v1/messages',envelope('msg_paused'))
+            assert exc.value.status == 503 and not store.state.list_messages()
+            gate.paused=False
+            assert (await client.request('POST','/v1/messages',envelope('msg_paused')))['state']=='queued'
+    asyncio.run(scenario())

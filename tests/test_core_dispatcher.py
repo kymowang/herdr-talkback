@@ -18,6 +18,22 @@ from herdr_talkback.endpoints import EndpointRegistry
 from herdr_talkback.state import TalkbackState
 
 
+def test_paused_dispatcher_does_not_claim_pending_messages(tmp_path):
+    from herdr_talkback.admission import AdmissionGate
+
+    async def scenario():
+        state, registry = configured_state_and_registry(tmp_path)
+        gate = AdmissionGate(paused=True)
+        dispatcher = CoreDispatcher(state, registry, {}, admission_gate=gate)
+        dispatcher.wake('linux-main/runner')
+        assert not dispatcher._endpoint_tasks
+        await dispatcher._run_endpoint('linux-main/runner')
+        assert not dispatcher._endpoint_tasks
+        await dispatcher.close()
+
+    asyncio.run(scenario())
+
+
 def test_delivery_lease_accept_is_idempotent():
     reasons = []
     lease = core_types.DeliveryLease(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 from .adapters.herdr import HerdrAdapter
 from .core_dispatcher import CoreDispatcher
@@ -152,6 +153,8 @@ async def run_service(config, dry_run: bool = False) -> int:
     state.init()
     from .operator_controls import OperatorStore, MonitorController
     operator_store = OperatorStore(state)
+    from .admission import AdmissionGate
+    admission_gate = AdmissionGate(paused=os.environ.get('HERDR_TALKBACK_MAINTENANCE') == '1')
     notifier = HerdrNotifier(
         client,
         enabled=config.notify_enabled,
@@ -168,6 +171,7 @@ async def run_service(config, dry_run: bool = False) -> int:
         stale_input_seconds=getattr(config, 'delivery_stale_input_seconds', 300),
         notifier=notifier,
         manage_message_state=False,
+        admission_gate=admission_gate,
     )
     adapter = HerdrAdapter(config.core_node_id, role_registry, delivery)
     endpoint_registry = EndpointRegistry()
@@ -184,9 +188,13 @@ async def run_service(config, dry_run: bool = False) -> int:
             target = parse_endpoint_address(row['target_endpoint'])
             if isinstance(target, EndpointAddress) and target.node_id in config.peers:
                 peer_adapter.ensure_endpoint(target)
-    dispatcher = CoreDispatcher(state, endpoint_registry, adapters)
+    dispatcher = CoreDispatcher(state, endpoint_registry, adapters, admission_gate=admission_gate)
     if network_enabled:
-        peer_server = PeerServer(config, peer_store, dispatcher, registry=role_registry)
+        from .remote_update import launch_update
+        peer_server = PeerServer(config, peer_store, dispatcher, registry=role_registry,
+                                 update_launcher=lambda peer, request_id: launch_update(
+                                     state.path, config.daemon_socket_path, peer, request_id),
+                                 admission_gate=admission_gate)
     daemon_router = DaemonMessageRouter(
         config,
         role_registry,
@@ -195,6 +203,7 @@ async def run_service(config, dry_run: bool = False) -> int:
         notifier=notifier,
         peer_adapter=peer_adapter,
         operator_store=operator_store,
+        admission_gate=admission_gate,
     )
     inbox = DaemonInboxServer(config.daemon_socket_path, daemon_router.handle)
     logic_monitor = None

@@ -54,3 +54,15 @@ def test_invalid_peer_urls(tmp_path, monkeypatch, url):
     path.write_text('[peers.remote]\nurl="' + url + '"', encoding='utf-8')
     with pytest.raises(ValueError, match='HTTPS'):
         load_config(path)
+
+
+def test_remote_control_permission_requires_explicit_boolean(tmp_path, monkeypatch):
+    monkeypatch.setenv('HERDR_SOCKET_PATH','test.sock')
+    path = tmp_path/'config.toml'
+    path.write_text('[peers.remote]\nurl="https://example.test:18765"\n',encoding='utf-8')
+    assert not load_config(path).peers['remote'].allow_remote_control
+    path.write_text('[peers.remote]\nurl="https://example.test:18765"\nallow_remote_control=true\n',encoding='utf-8')
+    assert load_config(path).peers['remote'].allow_remote_control
+    path.write_text('[peers.remote]\nurl="https://example.test:18765"\nallow_remote_control="true"\n',encoding='utf-8')
+    with pytest.raises(ValueError,match='allow_remote_control'):
+        load_config(path)

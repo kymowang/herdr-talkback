@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Optional
@@ -89,7 +90,7 @@ class DaemonInboxServer:
 
 
 class DaemonMessageRouter:
-    def __init__(self, config, registry, dispatcher, state=None, notifier=None, peer_adapter=None, operator_store=None, monitor_controller=None) -> None:
+    def __init__(self, config, registry, dispatcher, state=None, notifier=None, peer_adapter=None, operator_store=None, monitor_controller=None, admission_gate=None) -> None:
         self.config = config
         self.registry = registry
         self.dispatcher = dispatcher
@@ -98,9 +99,32 @@ class DaemonMessageRouter:
         self.peer_adapter = peer_adapter
         self.operator_store = operator_store
         self.monitor_controller = monitor_controller
+        self.admission_gate = admission_gate
         self._lock = asyncio.Lock()
 
     async def handle(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        if payload.get('type') == 'update_quiesce':
+            if self.admission_gate is None or self.state is None:
+                return {'ok': False, 'error': 'maintenance control is unavailable'}
+            if payload.get('state_path') != str(self.state.path.resolve()) or type(payload.get('paused')) is not bool:
+                return {'ok': False, 'error': 'invalid maintenance request'}
+            async with self.admission_gate.lock:
+                self.admission_gate.paused = payload['paused']
+                if not self.admission_gate.paused and self.dispatcher is not None:
+                    for endpoint in self.state.list_dispatchable_endpoints():
+                        self.dispatcher.wake(endpoint)
+            return {'ok': True, 'paused': self.admission_gate.paused}
+        if payload.get('type') in ('send', 'whoami') and self.admission_gate is not None:
+            async with self.admission_gate.lock:
+                if self.admission_gate.paused:
+                    return {'ok': False, 'error': 'Talkback is updating; retry after service restart'}
+                return await self._handle_unlocked(payload)
+        return await self._handle_unlocked(payload)
+
+    async def _handle_unlocked(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        if payload.get('type') == 'runtime_info':
+            return {'ok': True, 'update_id': os.environ.get('HERDR_TALKBACK_UPDATE_ID', ''),
+                    'module_path': str(Path(__file__).resolve())}
         if payload.get('type') == 'monitor_state':
             if self.monitor_controller is None:
                 return {'ok': False, 'error': 'monitor control is unavailable'}

@@ -29,6 +29,7 @@ class CoreDispatcher:
         lease_id_factory: Callable[[], str] = None,
         *,
         retry_delay_seconds: float = DEFAULT_RETRY_DELAY_SECONDS,
+        admission_gate=None,
     ) -> None:
         if retry_delay_seconds <= 0:
             raise ValueError("retry delay must be positive")
@@ -37,6 +38,7 @@ class CoreDispatcher:
         self.adapters = adapters
         self.lease_id_factory = lease_id_factory or (lambda: uuid.uuid4().hex)
         self.retry_delay_seconds = float(retry_delay_seconds)
+        self.admission_gate = admission_gate
         self._endpoint_tasks: Dict[str, asyncio.Task] = {}
         self._pending_wakes: Set[str] = set()
         self._retry_handles: Dict[str, asyncio.TimerHandle] = {}
@@ -47,6 +49,8 @@ class CoreDispatcher:
 
     def wake(self, endpoint: str) -> None:
         if self._closed:
+            return
+        if self.admission_gate is not None and self.admission_gate.paused:
             return
         current = self._endpoint_tasks.get(endpoint)
         if current is not None and not current.done():
@@ -106,6 +110,8 @@ class CoreDispatcher:
 
     async def _run_endpoint(self, endpoint: str) -> None:
         while True:
+            if self.admission_gate is not None and self.admission_gate.paused:
+                return
             lease_id = self.lease_id_factory()
             claimed = self.state.claim_next(endpoint, lease_id, time.time())
             if claimed is None:
