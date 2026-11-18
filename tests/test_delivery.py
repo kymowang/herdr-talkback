@@ -1031,3 +1031,17 @@ def test_flush_waits_for_composer_repaint_before_failing(tmp_path):
         assert result.reason == "residue flushed"
 
     asyncio.run(scenario())
+
+
+def test_flush_retries_a_plain_residue_read_before_failing(tmp_path):
+    async def scenario():
+        residue = f"❯ \x1b[38;2;255;255;255m{MESSAGE_TEXT}\x1b[0m"
+        client = FakeClient([EMPTY_PROMPT, residue, residue, EMPTY_PROMPT])
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, sleep=FakeSleeper().sleep).deliver(
+            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert result.delivered
+        assert result.reason == "residue flushed"
+
+    asyncio.run(scenario())

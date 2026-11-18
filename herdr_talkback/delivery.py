@@ -312,13 +312,17 @@ class DeliveryService:
         # single immediate read reports residue that is already being submitted.
         deadline_seconds = max(self.verify_timeout_ms, 1000) / 1000
         waited = 0.0
+        polls = 0
         raw = await self._read_input(pane_id)
         state = inspect_input(raw, expected_message, allow_transformed_residue=True, agent=agent)
-        # Only a folded draft needs the extra wait; plain visible residue is
-        # reported immediately so a stuck draft still fails fast.
-        while state.kind == "residue" and is_folded_paste_block(raw) and waited < deadline_seconds:
+        # Every CLI needs a beat to repaint after Enter; a folded draft needs
+        # the full timeout because the fold may collapse late.
+        while state.kind == "residue" and waited < deadline_seconds:
+            if not is_folded_paste_block(raw) and polls >= 2:
+                break
             await self.sleep(self.verify_poll_interval_seconds)
             waited += self.verify_poll_interval_seconds
+            polls += 1
             raw = await self._read_input(pane_id)
             state = inspect_input(raw, expected_message, allow_transformed_residue=True, agent=agent)
         if state.kind in {"empty", "submitted"}:
