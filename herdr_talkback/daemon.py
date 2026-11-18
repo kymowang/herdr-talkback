@@ -13,6 +13,7 @@ from .core_types import CoreMessage, CoreMessageState
 from .messages import HEADER_RE, MessageParseError, parse_message
 from .notifier import NullNotifier, notify_alert
 from .types import MessageState
+from . import __version__, __build__
 
 
 DaemonHandler = Callable[[Mapping[str, Any]], Awaitable[Mapping[str, Any]]]
@@ -124,7 +125,7 @@ class DaemonMessageRouter:
     async def _handle_unlocked(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         if payload.get('type') == 'runtime_info':
             return {'ok': True, 'update_id': os.environ.get('HERDR_TALKBACK_UPDATE_ID', ''),
-                    'module_path': str(Path(__file__).resolve())}
+                    'module_path': str(Path(__file__).resolve()), 'version': __version__, 'build': __build__}
         if payload.get('type') == 'monitor_state':
             if self.monitor_controller is None:
                 return {'ok': False, 'error': 'monitor control is unavailable'}

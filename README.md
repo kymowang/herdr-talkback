@@ -72,6 +72,12 @@ herdr plugin action invoke herdr-talkback.start
 
 ## 配置与适用范围
 
+### 查看版本
+
+`herdr-talkback --version` 显示当前命令的发行版本和代码指纹。`herdr-talkback version` 比较命令与运行中服务的版本和指纹；`matches: false` 表示二者不同，应确认安装和服务重启。若服务离线或旧版不支持查询，会返回 `service_error`，而不是推断服务版本。可用 `--config <配置路径>` 指定会话配置。
+
+`herdr-talkback --config <配置路径> peers check <节点>` 也会显示支持该功能的远端服务版本。指纹在进程启动时由包内 Python 和默认 TOML 内容计算，可区分同一发行版本的不同源码；它不是 Git 提交号，也不能证明进程启动后文件未被修改。
+
 ```bash
 herdr plugin config-dir herdr-talkback
 ```

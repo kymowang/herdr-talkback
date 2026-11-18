@@ -39,8 +39,11 @@ class JoinMessageAction(argparse.Action):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="herdr-talkback")
+    from . import __version__, __build__
+    parser.add_argument('--version', action='version', version=f'herdr-talkback {__version__} {__build__}')
     parser.add_argument("--config", type=Path)
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser('version', help='Compare CLI and running service versions')
 
     monitor = sub.add_parser('monitor', help='Inspect inferred pane states')
     monitor_flags = monitor.add_mutually_exclusive_group()
@@ -168,6 +171,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             parser.error('monitor requires status, state, enable, or disable')
         if args.config is None:
             args.config = _discover_plugin_config()
+    elif args.command == 'version' and args.config is None:
+        args.config = _discover_plugin_config()
     elif args.command == 'pane' and args.pane_command == 'identity' and args.config is None:
         args.config = _discover_plugin_config()
     elif args.command == 'peer' and args.peer_command in ('input', 'submit', 'submit-status', 'update', 'update-status') and args.config is None:
@@ -203,6 +208,24 @@ def _discover_plugin_config():
 
 
 async def _main_async(args) -> int:
+    if args.command == 'version':
+        from . import __version__, __build__
+        result = {'cli': {'version': __version__, 'build': __build__}, 'service': None, 'matches': None}
+        try:
+            config = load_config(args.config)
+            response = await submit_daemon_request(config.daemon_socket_path, {'type': 'runtime_info'})
+            if response.get('ok'):
+                result['service'] = response
+                if response.get('version') and response.get('build'):
+                    result['matches'] = response['version'] == __version__ and response['build'] == __build__
+                else:
+                    result['service_error'] = 'running service does not report a version; update and restart it'
+            else:
+                result['service_error'] = response.get('error', 'runtime information unavailable')
+        except (OSError, RuntimeError, ValueError) as exc:
+            result['service_error'] = str(exc)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
     if args.command == 'monitor':
         if args.monitor_command == 'state':
             from .operator_controls import read_monitor_enabled

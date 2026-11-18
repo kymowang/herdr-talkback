@@ -147,6 +147,7 @@ def test_runtime_marker_reports_running_daemon_module(monkeypatch):
         result = await router.handle({'type':'runtime_info'})
         assert result['ok'] and result['update_id'] == 'update_1'
         assert result['module_path'].endswith('daemon.py')
+        assert result['version'] and result['build'].startswith('sha256:')
     asyncio.run(scenario())
 
 

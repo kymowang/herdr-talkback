@@ -263,10 +263,11 @@ def _inspect_opencode(ansi_text, expected):
     trailing = lines[index + 1:]
     if not trailing or 'ctrl+p' not in trailing[0] or 'commands' not in trailing[0]:
         return None
-    is_home = 'Sisyphus - Ultraworker' in lines[index - 1]
+    is_home = ('Sisyphus - Ultraworker' in lines[index - 1]
+               or (len(trailing) == 2 and re.fullmatch(r'\s*\d+\.\d+\.\d+\s*', trailing[1]) is not None))
     if is_home:
         extra = trailing[1:]
-        if any(not ('Tip Use up' in line or ('/status' in line and re.search(r'\b\d+\.\d+\.\d+\b', line))) for line in extra):
+        if any(not ('Tip Use up' in line or ('/status' in line and re.search(r'\b\d+\.\d+\.\d+\b', line)) or re.fullmatch(r'\s*\d+\.\d+\.\d+\s*', line)) for line in extra):
             return InputState(kind='unknown', text_after_prompt='')
     elif len(trailing) != 1:
         return InputState(kind='unknown', text_after_prompt='')

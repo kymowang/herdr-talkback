@@ -95,6 +95,19 @@ def test_opencode_home_screen_draft_and_overlay_are_not_empty():
     assert inspect_input(stale + home_screen('Ask anything… "Fix a TODO in the codebase"', '255;255;255'), '').kind == 'occupied'
 
 
+def test_opencode_v2_home_placeholder_and_draft():
+    def v2(text, color='128;128;128'):
+        return (home_screen(text, color)
+                .replace('Sisyphus - Ultraworker auto', 'Build auto')
+                .replace('      ● Tip Use up / ctrl+x down / left / right for parent/child session\n', '')
+                .replace('  D:\\arc:master  ⊙ 4 MCP /status      1.19.3', ' ' * 60 + '2.3.0'))
+    placeholder = 'Ask anything… "Fix a TODO in the codebase"'
+    assert inspect_input(v2(placeholder), '').kind == 'empty'
+    assert inspect_input(v2('user draft', '255;255;255'), '').kind == 'occupied'
+    assert inspect_input(v2(placeholder, '255;255;255'), '').kind == 'occupied'
+    assert inspect_input(v2(placeholder) + '\nApproval required', '').kind == 'unknown'
+
+
 def test_sanitize_snapshot_clears_opencode_placeholder_and_keeps_box():
     out = sanitize_snapshot(home_screen('Ask anything… "Fix a TODO in the codebase"'))
     assert 'Ask anything' not in out

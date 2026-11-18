@@ -15,6 +15,27 @@ from herdr_talkback.state import TalkbackState
 from herdr_talkback.types import MessageState
 
 
+def test_version_option_reports_package_and_build(capsys):
+    with pytest.raises(SystemExit) as result:
+        cli.main(['--version'])
+    assert result.value.code == 0
+    output = capsys.readouterr().out
+    assert '0.1.0' in output and 'sha256:' in output
+
+
+def test_version_command_compares_cli_and_service(monkeypatch, capsys):
+    async def request(path, payload):
+        assert payload['type'] == 'runtime_info'
+        return {'ok': True, 'version': '0.1.0', 'build': 'sha256:old'}
+    monkeypatch.setattr(cli, '_discover_plugin_config', lambda: None)
+    monkeypatch.setattr(cli, 'submit_daemon_request', request)
+    assert cli.main(['version']) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['cli']['build'].startswith('sha256:')
+    assert result['service']['build'] == 'sha256:old'
+    assert result['matches'] is False
+
+
 def test_parser_accepts_panes_command():
     args = build_parser().parse_args(["panes"])
     assert args.command == "panes"

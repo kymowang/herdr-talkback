@@ -10,6 +10,7 @@ import aiohttp
 from aiohttp import web
 
 from .peer_state import PeerCapacity, PeerConflict, REQUEST_LIMIT, PROTOCOL_VERSION, validate_envelope
+from . import __version__, __build__
 
 
 def _has_folded_input(raw, state):
@@ -132,6 +133,7 @@ class PeerServer:
         if request.method == 'GET' and request.path == '/v1/info':
             return web.json_response(dict(protocol_version=1, node_id=self.config.core_node_id,
                                           instance_id=self.store.instance_id,
+                                          version=__version__, build=__build__,
                                           capabilities=(['whoami_registration', 'peer_pane_control'] if self.registry is not None else []) + (['peer_install_update'] if self.update_launcher is not None else [])))
         control_status = re.fullmatch(r'/v1/control/requests/([A-Za-z0-9_-]{1,128})', request.path)
         if request.method == 'GET' and control_status:

@@ -37,6 +37,7 @@ def test_https_admission_duplicate_and_receipt(tmp_path):
             client = PeerClient('sender', peer)
             info = await client.request('GET', '/v1/info')
             assert info['node_id'] == 'receiver' and info['instance_id'] == store.instance_id
+            assert info['version'] and info['build'].startswith('sha256:')
             first = await client.request('POST', '/v1/messages', envelope())
             second = await client.request('POST', '/v1/messages', envelope())
             assert first['message_id'] == second['message_id'] == 'msg_test'
