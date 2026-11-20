@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from types import ModuleType
 
+import herdr_talkback
 import herdr_talkback.cli as cli
 import herdr_talkback.service as service_module
 import pytest
@@ -20,7 +21,7 @@ def test_version_option_reports_package_and_build(capsys):
         cli.main(['--version'])
     assert result.value.code == 0
     output = capsys.readouterr().out
-    assert '0.1.0' in output and 'sha256:' in output
+    assert herdr_talkback.__version__ in output and 'sha256:' in output
 
 
 def test_version_command_compares_cli_and_service(monkeypatch, capsys):

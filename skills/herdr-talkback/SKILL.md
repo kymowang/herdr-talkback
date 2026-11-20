@@ -104,6 +104,12 @@ herdr-talkback --config $cfg message status msg_实际消息ID --json
 
 Use `send --dry-run` to check routing without sending. `queued` and `accepted` do not prove delivery: query the returned message ID and report its actual state. `delivered` is the final delivery receipt; `waiting_endpoint` means the target is unavailable or unregistered; `failed` or `delivery_unknown` requires inspection before retrying, because the message may already be in or submitted to a pane. The configured unattended delivery fallback may submit an occupied input from any source after the entire visible screen is unchanged for `[delivery].stale_input_seconds` (default 300 seconds) while a message is waiting. Set it to 0 to disable the fallback. It checks again before Enter, restarts timing on screen changes or service restart, skips folded drafts and unrecognized inputs, and continues pending delivery only after the input clears. Cross-host fallback runs on the receiving host. Do not manually submit a draft without user instruction. Registered aliases require daemon delivery; do not use `--direct` with them.
 
+## Diagnosing a broken peer link
+
+Run `herdr-talkback peer diag <node_id>` before changing configuration. It walks the layers in order and reports the first broken one: TCP reachability, a TLS handshake with the peer certificate fingerprint, certificate/SAN match with the peer URL, the credential-free `/v1/ping` probe, an authenticated `/v1/info` call (which separates a wrong token, 401, from a permission denial, 403), and local cert/token file health. `--json` prints the same report for scripting.
+
+The ping probe needs no token, so it works while credentials are still being exchanged. Peers on older builds answer it with 401; the report marks that as an unsupported probe rather than a failure. The report never prints token contents or private keys: it prints file paths, SHA-256 certificate fingerprints, key lengths and instructions for exchanging the public certificate and the pair token manually.
+
 ## Remote service control
 
 Remote administration is opt-in per authenticated peer: on the receiving node, set `allow_remote_control = true` in the trusted sender's `[peers.<node>]` section and restart the service. It grants input inspection, submit, and installation update; use distinct peer tokens because shared tokens cannot distinguish peers securely. Both sides need a version supporting these commands.

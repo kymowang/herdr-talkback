@@ -1,9 +1,18 @@
 id = "herdr-talkback"
 name = "Herdr Talkback"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.9.1"
 description = "Queued agent messaging and configurable, agent-scoped recovery for Herdr"
 platforms = ["linux", "macos", "windows"]
+
+# 安装/更新时同步 agent skill（构建命令不接收运行时插件上下文）
+[[build]]
+command = ["python3", "install_skill.py"]
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["python", "install_skill.py"]
+platforms = ["windows"]
 
 [[startup]]
 command = ["herdr-talkback-plugin", "start"]

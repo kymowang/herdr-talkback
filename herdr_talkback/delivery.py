@@ -140,14 +140,11 @@ class DeliveryService:
                     message.message_id, attempt, "verifying", "failed", "pane input unreadable")
                 await self._notify_delivery_failed(message, attempt, "pane input unreadable")
                 return DeliveryResult(False, "pane input unreadable", attempt)
-            self._update_message_state(message.message_id, MessageState.RETRYING, "delivery ambiguous")
-            self.state.record_attempt(message.message_id, attempt, "verifying", "retrying", "delivery ambiguous")
-            if attempt < self.max_attempts:
-                await self.sleep(self.retry_interval_seconds)
-                continue
-
-            self.state.update_message_state(message.message_id, MessageState.FAILED, "delivery ambiguous")
-            self.state.record_attempt(message.message_id, attempt, "retrying", "failed", "delivery ambiguous")
+            # The message was written exactly once: an unconfirmable result must
+            # never be resent, or a busy pane receives the same text repeatedly.
+            self._update_message_state(message.message_id, MessageState.FAILED, "delivery ambiguous")
+            self.state.record_attempt(
+                message.message_id, attempt, "verifying", "failed", "delivery ambiguous")
             await self._notify_delivery_failed(message, attempt, "delivery ambiguous")
             return DeliveryResult(False, "delivery ambiguous", attempt)
 
@@ -282,8 +279,6 @@ class DeliveryService:
                 return "delivered"
             if state.kind == "residue":
                 return "residue"
-            if state.kind == "occupied":
-                return "ambiguous"
         return "unreadable" if last_kind == "unknown" else "ambiguous"
 
     async def _verify_polling(self, pane_id: str, expected_message: str, timeout_ms, agent) -> str:

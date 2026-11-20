@@ -62,6 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
     tls.add_argument('--directory', type=Path, required=True)
     tls.add_argument('--host', action='append', required=True)
     tls.add_argument('--force', action='store_true')
+    diag = peer_sub.add_parser('diag', help='Diagnose peer connectivity step by step')
+    diag.add_argument('node_id')
+    diag.add_argument('--json', action='store_true')
+    diag.add_argument('--timeout', type=float, default=5.0)
     peer_input = peer_sub.add_parser('input', help='Inspect a peer pane input')
     peer_input.add_argument('node_id')
     peer_input.add_argument('pane')
@@ -175,7 +179,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         args.config = _discover_plugin_config()
     elif args.command == 'pane' and args.pane_command == 'identity' and args.config is None:
         args.config = _discover_plugin_config()
-    elif args.command == 'peer' and args.peer_command in ('input', 'submit', 'submit-status', 'update', 'update-status') and args.config is None:
+    elif args.command == 'peer' and args.peer_command in ('diag', 'input', 'submit', 'submit-status', 'update', 'update-status') and args.config is None:
         args.config = _discover_plugin_config()
     try:
         return asyncio.run(_main_async(args))
@@ -337,6 +341,25 @@ async def _main_async(args) -> int:
         except (ValueError, OSError, RuntimeError) as exc:
             print(json.dumps({'ok': False, 'error': str(exc)}, ensure_ascii=False))
             return 1
+    if args.command == 'peer' and args.peer_command == 'diag':
+        from .peer_diag import diagnose, summary
+        cfg = load_config(args.config)
+        peer = cfg.peers.get(args.node_id)
+        if peer is None:
+            print('peer not configured: ' + args.node_id)
+            return 1
+        try:
+            report = await diagnose(peer, cfg.core_node_id, timeout=args.timeout)
+        except Exception as exc:  # noqa: BLE001 - diagnostics must never crash
+            print(json.dumps({'peer': args.node_id, 'ok': False,
+                              'error': f'{type(exc).__name__}: {exc}'}, ensure_ascii=False))
+            return 1
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, default=str))
+        else:
+            print(summary(report))
+        return 0 if report['steps'] and all(step['ok'] for step in report['steps']) else 1
+
     if args.command == 'peer' and args.peer_command == 'init-tls':
         try:
             from .certificates import provision

@@ -561,29 +561,57 @@ async def _delivery_flushes_image_placeholder_residue_without_retrying(tmp_path)
     ]
 
 
-def test_delivery_waits_before_retrying_ambiguous_delivery(tmp_path):
-    asyncio.run(_delivery_waits_before_retrying_ambiguous_delivery(tmp_path))
+def test_ambiguous_after_write_is_never_resent(tmp_path):
+    """A busy pane must not receive the same text twice."""
+
+    async def scenario():
+        message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
+        client = FakeClient([EMPTY_PROMPT] + [OCCUPIED_PROMPT] * 5)
+        sleeper = FakeSleeper()
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+
+        result = await DeliveryService(
+            client,
+            FakeRegistry(),
+            state,
+            max_attempts=3,
+            retry_interval_seconds=30,
+            sleep=sleeper.sleep,
+        ).deliver(message)
+
+        assert result.delivered is False
+        assert result.reason == "delivery ambiguous"
+        sends = [params for method, params in client.requests if method == "pane.send_input"]
+        assert len(sends) == 1, "the message body is written exactly once"
+        assert sleeper.delays == [5, 10, 30, 60, 120]
+
+    asyncio.run(scenario())
 
 
-async def _delivery_waits_before_retrying_ambiguous_delivery(tmp_path):
-    message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
-    client = FakeClient([EMPTY_PROMPT, OCCUPIED_PROMPT, EMPTY_PROMPT, EMPTY_PROMPT])
-    sleeper = FakeSleeper()
-    state = TalkbackState(tmp_path / "state.db")
-    state.init()
+def test_other_text_in_composer_still_settles_to_delivered(tmp_path):
+    async def scenario():
+        message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
+        client = FakeClient([EMPTY_PROMPT, OCCUPIED_PROMPT, EMPTY_PROMPT])
+        sleeper = FakeSleeper()
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
 
-    result = await DeliveryService(
-        client,
-        FakeRegistry(),
-        state,
-        max_attempts=2,
-        retry_interval_seconds=30,
-        sleep=sleeper.sleep,
-    ).deliver(message)
+        result = await DeliveryService(
+            client,
+            FakeRegistry(),
+            state,
+            max_attempts=2,
+            retry_interval_seconds=30,
+            sleep=sleeper.sleep,
+        ).deliver(message)
 
-    assert result.delivered is True
-    assert result.attempts == 2
-    assert sleeper.delays == [5, 30, 5]
+        assert result.delivered is True
+        sends = [params for method, params in client.requests if method == "pane.send_input"]
+        assert len(sends) == 1
+        assert sleeper.delays == [5, 10]
+
+    asyncio.run(scenario())
 
 
 def test_delivery_does_not_flush_paste_block_before_sending(tmp_path):
@@ -882,14 +910,14 @@ def test_delivery_checks_for_stuck_input_five_seconds_after_send(tmp_path):
 
 def test_delayed_check_does_not_submit_different_input(tmp_path):
     async def scenario():
-        client = FakeClient([EMPTY_PROMPT, OCCUPIED_PROMPT])
+        client = FakeClient([EMPTY_PROMPT] + [OCCUPIED_PROMPT] * 5)
         sleeper = FakeSleeper()
         state = TalkbackState(tmp_path / 'state.db')
         state.init()
         result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
                                        sleep=sleeper.sleep, post_send_check_seconds=5).deliver(
             parse_message(MESSAGE_TEXT, ROLES, ALIASES))
-        assert sleeper.delays == [5]
+        assert sleeper.delays == [5, 10, 30, 60, 120]
         assert not result.delivered
         assert not any(method == 'pane.send_input' and params['text'] == ''
                        for method, params in client.requests)

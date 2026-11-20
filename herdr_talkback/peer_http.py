@@ -98,6 +98,19 @@ class PeerServer:
             await self.runner.cleanup()
 
     async def _handle(self, request):
+        if request.method == 'GET' and request.path == '/v1/ping':
+            # Fixed, credential-free liveness probe for connectivity triage.
+            # It never exposes message bodies, tokens or certificates.
+            response = web.json_response({
+                'ping': True,
+                'protocol_version': 1,
+                'node_id': self.config.core_node_id,
+                'instance_id': self.store.instance_id,
+                'version': __version__,
+                'build': __build__,
+            })
+            response.force_close()
+            return response
         peer = request.headers.get('X-Talkback-Node', '')
         token = self.tokens.get(peer)
         supplied = request.headers.get('Authorization', '')

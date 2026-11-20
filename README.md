@@ -339,6 +339,19 @@ Linux 端将本机 `node_id` 设置为 `openclaw`，监听 `192.168.90.18`；对
 Talkback 服务 pane 并执行 `start`。每个网络端口属于一个 Herdr 会话，多会话须使用
 不同的配置和端口；离线对端不会阻止本地服务启动。
 
+链路异常时先跑诊断，它会逐层报告第一个失败点（TCP、TLS 握手与证书指纹、
+证书 SAN 与 URL 是否匹配、免凭据 `/v1/ping`、带 token 的 `/v1/info`、本机
+凭据文件健康度）：
+
+```bash
+herdr-talkback peer diag pc55          # 人类可读
+herdr-talkback peer diag pc55 --json   # 供脚本使用
+```
+
+`/v1/ping` 不需要证书和 token，可在凭据交换完成前验证网络是否可达；对端版本
+较旧时会返回 401，诊断会标注为"对端尚未提供该探针"而不是链路失败。报告不会
+输出 token 内容或私钥，只给文件路径、证书 SHA-256 指纹和人工交换说明。
+
 ```bash
 CFG="$(herdr plugin config-dir herdr-talkback)/config.toml"
 herdr-talkback --config "$CFG" peers list
