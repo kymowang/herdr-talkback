@@ -78,7 +78,11 @@ def inspect_input(
         # 折叠的多行草稿仍在 composer 里,既不是空输入也不算已提交:
         # 忙时 CLI 会把它留着,只有 Enter 才真正提交。误判为空会让发送前
         # 检查漏掉占用,也会让发送后校验假报 delivered。
-        if (_supports_folded_drafts(agent) and expected_message
+        # 发送后(allow_transformed_residue)按渲染出的折叠标记判定即可,
+        # 不必依赖 agent 名: Herdr 的 pane agent 元数据可能落后于真实
+        # 前台 CLI(例如 pane 里已是 Command Code 但仍标着 codex), 按白名单
+        # 判会把刚写入的消息误判成 occupied, 最终落成 delivery ambiguous。
+        if ((allow_transformed_residue or _supports_folded_drafts(agent)) and expected_message
                 and _is_expected_folded_residue(visible, expected_message)):
             return InputState(
                 kind="residue",

@@ -5,7 +5,7 @@ import json
 import os
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Mapping, Optional
+from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
 
 from .transport import LocalServer, open_local_connection, start_local_server
 from .addressing import EndpointAddress, parse_endpoint_address
@@ -166,12 +166,15 @@ class DaemonMessageRouter:
                             if target_name in self.config.aliases or (target_name in self.registry.snapshot() and registered != self.config.core_node_id + '/' + target_name):
                                 raise MessageParseError('registered pane name conflicts with a local pane or alias')
                             raw_message = original[:match.start(2)] + registered + original[match.end(2):]
+                known_sources, source_hint = self._local_source_context(payload)
                 message = parse_message(
                     raw_message,
                     self.config.roles,
                     self.config.aliases,
                     local_node_id=self.config.core_node_id,
                     message_rules=getattr(self.config, "message_rules", ()),
+                    known_sources=known_sources,
+                    source_hint=source_hint,
                 )
                 if payload.get('type') == 'whoami':
                     if message.source.split('/')[-1] not in self.registry.snapshot():
@@ -243,6 +246,32 @@ class DaemonMessageRouter:
                 "source_endpoint": message.source_endpoint,
                 "target_endpoint": message.target_endpoint,
             }
+
+    def _local_source_context(self, payload: Mapping[str, Any]) -> tuple[Optional[Sequence[str]], str]:
+        # A retry replays an already accepted message, whose source pane may have gone away.
+        if payload.get("retry"):
+            return None, ""
+        known = set(self.config.roles)
+        known.update(self.config.aliases)
+        known.update(self.config.aliases.values())
+        snapshot = getattr(self.registry, "snapshot", None)
+        if snapshot is not None:
+            known.update(snapshot())
+        list_panes = getattr(self.operator_store, "panes", None) if self.operator_store is not None else None
+        if list_panes is not None:
+            prefix = self.config.core_node_id + "/"
+            known.update(
+                pane["name"] for pane in list_panes()
+                if pane["address"].startswith(prefix)
+            )
+        hint = ""
+        pane_id = payload.get("pane_id")
+        get_pane = getattr(self.registry, "get_pane", None)
+        if isinstance(pane_id, str) and pane_id and get_pane is not None:
+            info = get_pane(pane_id)
+            if info is not None and info.name:
+                hint = " (this pane is '{0}', pane id {1})".format(info.name, pane_id)
+        return known, hint
 
     async def drain(self) -> None:
         await self.dispatcher.drain()

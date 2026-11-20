@@ -399,6 +399,7 @@ def test_send_dry_run_submits_to_daemon_without_herdr_socket(monkeypatch, tmp_pa
 
 async def _send_dry_run_submits_to_daemon_without_herdr_socket(monkeypatch, tmp_path, capsys):
     monkeypatch.delenv("HERDR_SOCKET_PATH", raising=False)
+    monkeypatch.delenv("HERDR_PANE_ID", raising=False)
     daemon_socket = tmp_path / "herdr-talkback.sock"
     config_file = tmp_path / "herdr-talkback.toml"
     config_file.write_text(f'daemon_socket_path = "{daemon_socket.as_posix()}"\n', encoding="utf-8")
@@ -466,7 +467,7 @@ async def _retry_submits_stored_message_to_daemon_and_marks_old_message(monkeypa
     assert requests == [
         (
             daemon_socket,
-            {"type": "send", "message": "[lead→assistant] retry me", "dry_run": False},
+            {"type": "send", "message": "[lead→assistant] retry me", "dry_run": False, "retry": True},
         )
     ]
     assert state.get_message("msg_1")["state"] == "failed"

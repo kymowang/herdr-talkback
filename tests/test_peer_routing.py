@@ -15,6 +15,9 @@ def test_daemon_accepts_configured_remote_target_without_local_pane(tmp_path):
             async def refresh(self):
                 pass
 
+            def snapshot(self):
+                return {'agent': object()}
+
             def resolve_pane(self, role):
                 raise AssertionError('remote destinations must not resolve as local panes')
 

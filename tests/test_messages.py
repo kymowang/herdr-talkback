@@ -122,6 +122,40 @@ def test_parse_message_accepts_configured_local_alias_as_source():
     assert message.target_endpoint == "windows-dev/codex-review"
 
 
+def test_known_sources_rejects_node_id_as_sender():
+    with pytest.raises(MessageParseError, match="source is the node id, not a sender: openclaw"):
+        parse_message(
+            "[openclaw→codex2] task",
+            (), {},
+            local_node_id="openclaw",
+            known_sources={"monitor", "codex2"},
+            source_hint=" (this pane is 'monitor', pane id w1:p9)",
+        )
+
+
+def test_known_sources_names_the_senders_own_pane():
+    with pytest.raises(MessageParseError, match=r"unknown source role: ghost.*this pane is 'monitor'"):
+        parse_message(
+            "[ghost→codex2] task",
+            (), {},
+            local_node_id="linux-main",
+            known_sources={"monitor", "codex2"},
+            source_hint=" (this pane is 'monitor')",
+        )
+
+
+def test_known_sources_accepts_live_pane_label():
+    message = parse_message(
+        "[monitor→codex2] task",
+        (), {},
+        local_node_id="openclaw",
+        known_sources={"monitor", "codex2"},
+    )
+
+    assert message.source == "monitor"
+    assert message.source_endpoint == "openclaw/monitor"
+
+
 @pytest.mark.parametrize('source,append', [('lead', True), ('lead2', True), ('scheduler', True), ('dev-be2', False), ('linux-main/lead2', True)])
 def test_configured_receipt_reminder(source, append):
     reminder = '上述内容如果是任务而非通知，完成后请通过talkback发送回执给我'

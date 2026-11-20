@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import Mapping, Sequence
+from typing import Mapping, Optional, Sequence
 
 from .addressing import EndpointAddress, parse_endpoint_address, validate_node_id
 from .types import RoutedMessage
@@ -16,12 +16,28 @@ class MessageParseError(ValueError):
     pass
 
 
+def _unknown_source(source_name: str, local_node_id: str, hint: str) -> str:
+    if source_name == local_node_id:
+        return (
+            "source is the node id, not a sender: {0}. "
+            "Use your own pane label as source{1}; see 'herdr-talkback pane list'".format(
+                source_name, hint
+            )
+        )
+    return (
+        "unknown source role: {0}. Source must be a live local pane label, "
+        "alias or registered pane name{1}".format(source_name, hint)
+    )
+
+
 def parse_message(
     text: str,
     roles: Sequence[str],
     aliases: Mapping[str, str],
     local_node_id: str = "linux-main",
     message_rules=(),
+    known_sources: Optional[Sequence[str]] = None,
+    source_hint: str = "",
 ) -> RoutedMessage:
     match = HEADER_RE.match(text.strip())
     if not match:
@@ -52,6 +68,8 @@ def parse_message(
         source_endpoint = EndpointAddress(local_node_id, source_name).qualified
     if allowed and source_name not in allowed and source_name not in aliases:
         raise MessageParseError(f"unknown source role or alias: {source_name}")
+    if known_sources is not None and source_name not in set(known_sources):
+        raise MessageParseError(_unknown_source(source_name, local_node_id, source_hint))
 
     if isinstance(target_address, EndpointAddress):
         resolved_target = target

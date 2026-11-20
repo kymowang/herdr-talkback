@@ -359,6 +359,22 @@ def test_folded_draft_with_short_prefix_is_occupied():
     assert state.kind == "occupied"
 
 
+def test_folded_draft_is_residue_after_send_with_stale_agent_metadata():
+    # Herdr still reports agent=codex while the pane runs Command Code, which
+    # folds the just-sent draft. Delivery verification must trust the rendered
+    # fold marker instead of the pane's agent name.
+    message = "[openclaw→codex2] 任务交接：剩余 2 条红\n请确认改测试还是记已知红"
+    screen = "❯ [[openclaw→… +1L]"
+
+    state = inspect_input(screen, expected_message=message,
+                          allow_transformed_residue=True, agent="codex")
+
+    assert state.kind == "residue"
+    assert state.contains_expected_message is True
+    # Before sending, another agent's folded draft stays occupied.
+    assert inspect_input(screen, expected_message=message, agent="codex").kind == "occupied"
+
+
 def test_folded_draft_wrapped_opening_line_is_residue():
     # The CLI counts rendered lines, so soft wrapping makes the marker larger
     # than the logical newline count.

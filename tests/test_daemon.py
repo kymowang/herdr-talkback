@@ -244,6 +244,29 @@ class FakeRegistry:
         return "p-back"
 
 
+class SourceRegistry:
+    labels = {"w1:p9": "monitor", "w1:p2": "codex2"}
+
+    async def refresh(self):
+        pass
+
+    def snapshot(self):
+        return {name: SimpleNamespace(name=name, pane_id=pane_id)
+                for pane_id, name in self.labels.items()}
+
+    def get_pane(self, pane_id):
+        name = self.labels.get(pane_id)
+        if name is None:
+            return None
+        return SimpleNamespace(name=name, pane_id=pane_id)
+
+    def resolve_pane(self, role):
+        for pane_id, name in self.labels.items():
+            if name == role:
+                return pane_id
+        raise RoleResolutionError(f"role has no active pane: {role}")
+
+
 class FakeDispatcher:
     def __init__(self):
         self.wake_calls = []
@@ -291,6 +314,44 @@ def test_daemon_persists_configured_receipt_reminder(tmp_path):
         stored = state.get_message(response['message_id'])
         assert stored['body'] == 'one\n上述内容如果是任务而非通知，完成后请通过talkback发送回执给我'
         assert stored['raw_text'] == '[lead->dev-back] ' + stored['body']
+    asyncio.run(check())
+
+
+def test_daemon_rejects_node_id_and_unknown_sources(tmp_path):
+    async def check():
+        state = TalkbackState(tmp_path / 'state.db')
+        state.init()
+        cfg = SimpleNamespace(core_node_id='openclaw', roles=(), aliases={})
+        dispatcher = FakeDispatcher()
+        router = DaemonMessageRouter(cfg, SourceRegistry(), dispatcher, state=state)
+
+        node_id = await router.handle({
+            'type': 'send', 'message': '[openclaw->codex2] task', 'pane_id': 'w1:p9',
+        })
+        assert node_id['ok'] is False
+        assert 'source is the node id, not a sender: openclaw' in node_id['error']
+        assert "this pane is 'monitor', pane id w1:p9" in node_id['error']
+
+        unknown = await router.handle({'type': 'send', 'message': '[ghost->codex2] task'})
+        assert unknown['ok'] is False
+        assert 'unknown source role: ghost' in unknown['error']
+
+        assert dispatcher.wake_calls == []
+    asyncio.run(check())
+
+
+def test_daemon_router_accepts_live_pane_label_as_source(tmp_path):
+    async def check():
+        state = TalkbackState(tmp_path / 'state.db')
+        state.init()
+        cfg = SimpleNamespace(core_node_id='openclaw', roles=(), aliases={})
+        router = DaemonMessageRouter(cfg, SourceRegistry(), FakeDispatcher(), state=state)
+
+        response = await router.handle({'type': 'send', 'message': '[monitor->codex2] task'})
+
+        assert response['ok'] is True
+        assert response['source'] == 'monitor'
+        assert response['source_endpoint'] == 'openclaw/monitor'
     asyncio.run(check())
 
 

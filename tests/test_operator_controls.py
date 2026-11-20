@@ -79,7 +79,7 @@ def test_router_resolves_registered_remote_alias_without_contacting_peer(tmp_pat
         store.register_pane('remote_lead', 'openclaw/lead', cfg)
         class Registry:
             async def refresh(self): pass
-            def snapshot(self): return {}
+            def snapshot(self): return {'sender': object()}
         class Peer:
             def ensure_endpoint(self, target): self.target = target
         class Dispatcher:
@@ -258,7 +258,7 @@ def test_self_registered_local_pane_keeps_local_routing(tmp_path):
         store.register_pane('worker', 'windows/worker', cfg)
         class Registry:
             async def refresh(self): pass
-            def snapshot(self): return {'worker': object()}
+            def snapshot(self): return {'worker': object(), 'sender': object()}
             def resolve_pane(self, role): return 'p1'
         router = DaemonMessageRouter(cfg, Registry(), None, state=state, operator_store=store)
         result = await router.handle({'type': 'send', 'message': '[sender->worker] hello', 'dry_run': True})
@@ -295,7 +295,7 @@ def test_update_quiescence_blocks_and_then_allows_local_admission(tmp_path):
         cfg = SimpleNamespace(core_node_id='local', peers={}, roles=(), aliases={}, message_rules=())
         class Registry:
             async def refresh(self): pass
-            def snapshot(self): return {}
+            def snapshot(self): return {'sender': object()}
             def resolve_pane(self,name): return 'p1'
         class Dispatcher:
             def __init__(self): self.wakes = []

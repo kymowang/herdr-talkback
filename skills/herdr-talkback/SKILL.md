@@ -93,6 +93,15 @@ The `register-all`, `whoami`, `identity`, and `import` commands require a Talkba
 
 Send to another pane only when the user has authorized the communication. Set the source to the actual sender pane; select a current pane name, registered alias or configured `node/pane` as target. Both header arrows are accepted: `[source->target]` and `[source→target]`. **When generating a message automatically, prefer the single-character `→`; accept `->` when the user types it.**
 
+The source is your **own Herdr pane label**, not the machine identity. `core.node_id`, the hostname, `$USER` and the pane title are not sender names; using one makes the message unrepliable and is rejected. Resolve your label before sending:
+
+```text
+herdr-talkback --config $cfg pane list   # find the label of the pane you are running in
+echo "$HERDR_PANE_ID"                    # this pane's id; match it against pane list
+```
+
+If `send` fails with `source is the node id, not a sender`, the error names your actual pane label — resend using it. `send --dry-run` prints the resolved source, target and pane id without sending.
+
 Use the actual message or receipt supplied by the user or established in context; do not invent its content. Quote shell arguments safely, especially when the text contains apostrophes, dollar signs or line breaks. Read a pane's visible screen only if needed to find the content.
 
 ```text

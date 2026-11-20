@@ -134,10 +134,28 @@ def build_parser() -> argparse.ArgumentParser:
     clear = alerts_sub.add_parser("clear")
     clear.add_argument("ids", nargs="*", type=int)
 
-    send = sub.add_parser("send")
-    send.add_argument("message", nargs="+", action=JoinMessageAction)
-    send.add_argument("--dry-run", action="store_true")
-    send.add_argument("--direct", action="store_true")
+    send = sub.add_parser(
+        "send",
+        help="Queue a [source→target] message for a local pane or configured peer",
+        description=(
+            "Send '[source→target] body'. source MUST be the sender's own Herdr pane "
+            "label (see 'herdr-talkback pane list'); the machine node id, $USER and the "
+            "host name are not sender identities. Target may be a pane label, a registered "
+            "name, an alias or node/pane."
+        ),
+    )
+    send.add_argument(
+        "message", nargs="+", action=JoinMessageAction,
+        help="[source→target] body, quoted so the arrow is not shell redirection",
+    )
+    send.add_argument(
+        "--dry-run", action="store_true",
+        help="Print the resolved source, target and pane id without sending",
+    )
+    send.add_argument(
+        "--direct", action="store_true",
+        help="Diagnostics only: bypass the daemon queue (no retries, no recorded state)",
+    )
     whoami = sub.add_parser('whoami', help='Register and introduce a pane to a configured peer')
     whoami.add_argument('source')
     whoami.add_argument('host')
@@ -446,7 +464,7 @@ async def _main_async(args) -> int:
             return 1
         response = await submit_daemon_request(
             daemon_socket_path,
-            {"type": "send", "message": old_message["raw_text"], "dry_run": False},
+            {"type": "send", "message": old_message["raw_text"], "dry_run": False, "retry": True},
         )
         if response.get("ok") and response.get("message_id"):
             state.mark_message_superseded(args.message_id, str(response["message_id"]))
@@ -475,10 +493,11 @@ async def _main_async(args) -> int:
     if args.command == "send" and not args.direct:
         daemon_socket_path = _load_daemon_socket_path(args.config)
         try:
-            response = await submit_daemon_request(
-                daemon_socket_path,
-                {"type": "send", "message": args.message, "dry_run": args.dry_run},
-            )
+            payload = {"type": "send", "message": args.message, "dry_run": args.dry_run}
+            own_pane_id = os.environ.get("HERDR_PANE_ID")
+            if own_pane_id:
+                payload["pane_id"] = own_pane_id
+            response = await submit_daemon_request(daemon_socket_path, payload)
         except OSError as exc:
             response = {
                 "ok": False,
@@ -687,12 +706,23 @@ async def _main_async(args) -> int:
             match = HEADER_RE.match(args.message.strip())
             if match and read_registered_pane(cfg.state_path, match.group(2).strip()):
                 raise MessageParseError('registered pane names require daemon delivery; omit --direct')
+            known_sources = (
+                set(cfg.roles) | set(cfg.aliases) | set(cfg.aliases.values())
+                | set(registry.snapshot())
+            )
+            own_pane = registry.get_pane(os.environ.get("HERDR_PANE_ID", ""))
+            source_hint = ""
+            if own_pane is not None and own_pane.name:
+                source_hint = " (this pane is '{0}', pane id {1})".format(
+                    own_pane.name, own_pane.pane_id)
             message = parse_message(
                 args.message,
                 cfg.roles,
                 cfg.aliases,
                 local_node_id=local_node_id,
                 message_rules=getattr(cfg, "message_rules", ()),
+                known_sources=known_sources,
+                source_hint=source_hint,
             )
             target_address = parse_endpoint_address(message.target_endpoint)
             if isinstance(target_address, EndpointAddress) and target_address.node_id != local_node_id:
