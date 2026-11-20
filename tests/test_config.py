@@ -149,10 +149,17 @@ def test_config_root_falls_back_to_roaming_appdata_on_windows():
     )
 
 
-def test_config_root_uses_home_config_on_posix():
+def test_config_root_uses_plugin_config_on_posix():
     assert config.config_root("posix", Path("/home/user"), None) == (
-        Path("/home/user") / ".config" / "herdr-talkback"
+        Path("/home/user") / ".config" / "herdr" / "plugins" / "config" / "herdr-talkback"
     )
+
+
+def test_config_root_prefers_legacy_only_when_it_exists(tmp_path):
+    home = tmp_path
+    legacy = home / ".config" / "herdr-talkback"
+    legacy.mkdir(parents=True)
+    assert config.config_root("posix", home, None) == legacy
 
 
 def test_default_config_path_delegates_to_platform_root(monkeypatch, tmp_path):
@@ -219,3 +226,30 @@ def test_stale_input_timeout_is_configurable_and_can_be_disabled(monkeypatch, tm
     path.write_text('[delivery]\nstale_input_seconds = -1\n', encoding='utf-8')
     with pytest.raises(ValueError, match='stale_input_seconds'):
         load_config(path)
+
+
+def test_plugin_config_dir_wins_over_legacy_path(monkeypatch, tmp_path):
+    monkeypatch.delenv("HERDR_PLUGIN_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("HERDR_SOCKET_PATH", "/tmp/default.sock")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    legacy = tmp_path / ".config" / "herdr-talkback"
+    legacy.mkdir(parents=True)
+    (legacy / "config.toml").write_text('[delivery]\nmax_attempts = 2\n', encoding="utf-8")
+    plugin = tmp_path / ".config" / "herdr" / "plugins" / "config" / "herdr-talkback"
+    plugin.mkdir(parents=True)
+    (plugin / "config.toml").write_text('[delivery]\nmax_attempts = 7\n', encoding="utf-8")
+
+    assert load_config(None).delivery_max_attempts == 7
+
+
+def test_legacy_config_is_used_when_plugin_config_is_absent(monkeypatch, tmp_path):
+    monkeypatch.delenv("HERDR_PLUGIN_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("HERDR_SOCKET_PATH", "/tmp/default.sock")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    legacy = tmp_path / ".config" / "herdr-talkback"
+    legacy.mkdir(parents=True)
+    (legacy / "config.toml").write_text('[delivery]\nmax_attempts = 3\n', encoding="utf-8")
+
+    assert load_config(None).delivery_max_attempts == 3

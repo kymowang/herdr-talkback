@@ -69,6 +69,11 @@ def config_root(platform_name: str, home: Path, appdata: Optional[str]) -> Path:
         # Unix-style ~/.config directory is not the platform default.
         base = Path(appdata) if appdata else home / "AppData" / "Roaming"
         return base / "herdr" / "plugins" / "config" / "herdr-talkback"
+    # POSIX keeps plugin configuration under ~/.config/herdr/plugins as well;
+    # the pre-plugin ~/.config/herdr-talkback path is only a legacy fallback.
+    plugin = home / ".config" / "herdr" / "plugins" / "config" / "herdr-talkback"
+    if plugin.exists() or not (home / ".config" / "herdr-talkback").exists():
+        return plugin
     return home / ".config" / "herdr-talkback"
 
 

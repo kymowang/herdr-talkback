@@ -250,7 +250,7 @@ herdr-talkback --config "$CFG" monitor state
 给本机或已配置的远端节点登记容易记忆的名称，供 `send` 使用：
 
 ```bash
-herdr-talkback --config "$CFG" pane register local_dev linux-main/ast-dev1
+herdr-talkback --config "$CFG" pane register local_dev pc55/ast-dev1
 herdr-talkback --config "$CFG" pane register remote_lead openclaw/lead
 herdr-talkback --config "$CFG" pane registered --json
 herdr-talkback --config "$CFG" send '[ast-dev3->remote_lead] 消息内容'
@@ -314,7 +314,7 @@ Windows 示例（加入插件 `config.toml`；相对路径以配置目录为基�
 
 ```toml
 [core]
-node_id = "linux-main"
+node_id = "pc55"
 
 [network]
 enabled = true
@@ -330,7 +330,7 @@ token_file = "tls/pair.token"
 ```
 
 Linux 端将本机 `node_id` 设置为 `openclaw`，监听 `192.168.90.18`；对端表使用
-`[peers.linux-main]`，URL 为 `https://192.168.60.55:18765`，CA 指向 Windows 的公开证书。
+`[peers.pc55]`，URL 为 `https://192.168.60.55:18765`，CA 指向 Windows 的公开证书。
 有历史消息的节点保持原本的 `core.node_id`；两端 ID 必须不同。
 证书必须包含 URL 中的 IP/主机名，不能关闭证书验证。
 配置中已有 `[core]` 时修改原表，不要重复声明。
@@ -347,7 +347,7 @@ herdr-talkback --config "$CFG" send '[talkback->openclaw/worker] 测试消息'
 herdr-talkback --config "$CFG" message status msg_xxx --json
 ```
 
-反向发送在 Linux 端执行，例如 `[worker->linux-main/talkback] 收到`。
+反向发送在 Linux 端执行，例如 `[worker->pc55/talkback] 收到`。
 消息先持久化，再发送；远端确认入队后，本端继续查询最终投递回执。
 断网时按递增间隔重试，重启后使用相同消息 ID 续查/去重，不自动丢弃待发消息。
 `--direct` 仅用于本机，不能绕过跨机队列。

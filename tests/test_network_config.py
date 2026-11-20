@@ -6,9 +6,13 @@ import pytest
 from herdr_talkback.config import load_config
 
 
-def test_network_is_opt_in(monkeypatch, tmp_path):
+def test_network_is_opt_in(tmp_path, monkeypatch):
     monkeypatch.setenv('HERDR_SOCKET_PATH', 'test.sock')
     monkeypatch.setenv('APPDATA', str(tmp_path / 'AppData' / 'Roaming'))
+    # Default discovery must not read the machine's real plugin configuration.
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv('USERPROFILE', str(tmp_path))
+    monkeypatch.delenv('HERDR_PLUGIN_CONFIG_DIR', raising=False)
     assert not load_config(None).network.enabled
 
 
