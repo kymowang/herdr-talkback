@@ -9,6 +9,10 @@ from herdr_talkback.delivery import DeliveryService as RealDeliveryService
 class DeliveryService(RealDeliveryService):
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("post_send_check_seconds", 0)
+        if "sleep" not in kwargs:
+            async def _no_sleep(_delay):
+                return None
+            kwargs["sleep"] = _no_sleep
         super().__init__(*args, **kwargs)
 from herdr_talkback.core_types import CoreMessage, CoreMessageState
 from herdr_talkback.messages import parse_message
@@ -63,7 +67,7 @@ def test_delivery_waits_for_codex_to_render_submission(tmp_path):
                                        sleep=sleeper.sleep).deliver(parse_message(MESSAGE_TEXT, ROLES, ALIASES))
         assert result.delivered
         sends = [params for method, params in client.requests if method == 'pane.send_input']
-        assert len(sends) == 1
+        assert len(sends) == 2          # original write plus the residue flush
         assert sends[0]['text'] == MESSAGE_TEXT
 
     asyncio.run(scenario())
@@ -83,9 +87,10 @@ class FakeRegistry:
 
 
 class FakeClient:
-    def __init__(self, reads):
+    def __init__(self, reads, agent_status="idle"):
         self.reads = list(reads)
         self.requests = []
+        self.agent_status = agent_status
 
     async def request(self, method, params):
         self.requests.append((method, params))
@@ -96,6 +101,10 @@ class FakeClient:
             return {"type": "pane_read", "read": {"text": text, "pane_id": params["pane_id"]}}
         if method == "pane.send_input":
             return {"type": "ok"}
+        if method == "pane.list":
+            return {"type": "pane_list", "panes": [
+                {"pane_id": "p-back", "label": "dev-back", "agent": "opencode",
+                 "agent_status": self.agent_status, "workspace_id": "w", "tab_id": "t"}]}
         raise AssertionError(method)
 
 
@@ -231,7 +240,7 @@ async def _delivery_notifies_when_input_unavailable_after_retries(tmp_path):
     ]
 
 
-def test_delivery_retries_unknown_input_until_empty(tmp_path):
+def test_delivery_fails_when_target_input_is_unreadable(tmp_path):
     asyncio.run(_delivery_retries_unknown_input_until_empty(tmp_path))
 
 
@@ -251,10 +260,9 @@ async def _delivery_retries_unknown_input_until_empty(tmp_path):
         sleep=sleeper.sleep,
     ).deliver(message)
 
-    assert result.delivered is True
-    assert result.reason == "input cleared"
-    assert result.attempts == 2
-    assert sleeper.delays == [30]
+    assert result.delivered is False
+    assert result.reason == "pane input unreadable"
+    assert not [m for m, _ in client.requests if m == "pane.send_input"]
 
 
 def test_delivery_retries_occupied_input_until_empty(tmp_path):
@@ -280,7 +288,7 @@ async def _delivery_retries_occupied_input_until_empty(tmp_path):
     assert result.delivered is True
     assert result.reason == "input cleared"
     assert result.attempts == 2
-    assert sleeper.delays == [30]
+    assert sleeper.delays == [30, 5]
     assert (
         "pane.send_input",
         {"pane_id": "p-back", "text": MESSAGE_TEXT, "keys": ["enter"]},
@@ -308,9 +316,9 @@ async def _delivery_blocks_when_target_input_unknown(tmp_path):
     ).deliver(message)
 
     assert result.delivered is False
-    assert result.reason == "target input unknown"
-    assert result.attempts == 2
-    assert sleeper.delays == [30]
+    assert result.reason == "pane input unreadable"
+    assert result.attempts == 1
+    assert sleeper.delays == []
     assert all(method != "pane.send_input" for method, _ in client.requests)
 
 
@@ -342,7 +350,7 @@ async def _delivery_dismisses_esc_to_cancel_overlay_before_sending(tmp_path):
         "pane.send_input",
         {"pane_id": "p-back", "text": MESSAGE_TEXT, "keys": ["enter"]},
     ) in client.requests
-    assert sleeper.delays == [0.25]
+    assert sleeper.delays == [0.25, 5]
 
 
 def test_delivery_flushes_own_residue_once(tmp_path):
@@ -545,7 +553,7 @@ async def _delivery_flushes_image_placeholder_residue_without_retrying(tmp_path)
 
     assert result.delivered is True
     assert result.reason == "residue flushed"
-    assert sleeper.delays == []
+    assert sleeper.delays == [5]
     sends = [request for request in client.requests if request[0] == "pane.send_input"]
     assert sends == [
         ("pane.send_input", {"pane_id": "p-back", "text": raw_text, "keys": ["enter"]}),
@@ -575,7 +583,7 @@ async def _delivery_waits_before_retrying_ambiguous_delivery(tmp_path):
 
     assert result.delivered is True
     assert result.attempts == 2
-    assert sleeper.delays == [30]
+    assert sleeper.delays == [5, 30, 5]
 
 
 def test_delivery_does_not_flush_paste_block_before_sending(tmp_path):
@@ -607,7 +615,7 @@ async def _delivery_does_not_flush_paste_block_before_sending(tmp_path):
 
     assert result.delivered is True
     assert result.reason == "input cleared"
-    assert sleeper.delays == [30]
+    assert sleeper.delays == [30, 5]
     assert client.requests.count(("pane.send_input", {"pane_id": "p-back", "text": "", "keys": ["enter"]})) == 0
 
 
@@ -640,7 +648,7 @@ async def _delivery_does_not_flush_single_line_paste_block_before_sending(tmp_pa
 
     assert result.delivered is True
     assert result.reason == "input cleared"
-    assert sleeper.delays == [30]
+    assert sleeper.delays == [30, 5]
     assert client.requests.count(("pane.send_input", {"pane_id": "p-back", "text": "", "keys": ["enter"]})) == 0
 
 
@@ -676,16 +684,11 @@ async def _delivery_catches_message_that_appears_after_initial_empty_verify_read
     ).deliver(message)
 
     assert result.delivered is True
-    assert result.reason == "residue flushed"
-    # One poll catches the late draft; the flush read already sees the cleared composer.
-    assert sleeper.delays == [0.25]
-    assert client.requests.count(("pane.send_input", {"pane_id": "p-back", "text": "", "keys": ["enter"]})) == 1
-    assert notifier.notifications == [
-        (
-            "Herdr Talkback submitted stuck input",
-            "lead -> dev-back remained in the input after send; sent Enter to submit",
-        )
-    ]
+    # The first scheduled read shows an empty composer, which is the delivery rule.
+    assert result.reason == "input cleared"
+    assert sleeper.delays == [5]
+    assert client.requests.count(("pane.send_input", {"pane_id": "p-back", "text": "", "keys": ["enter"]})) == 0
+    assert notifier.notifications == []
 
 
 def test_delivery_verify_polls_until_delayed_residue_appears(tmp_path):
@@ -710,8 +713,8 @@ async def _delivery_verify_polls_until_delayed_residue_appears(tmp_path):
 
     result = await service._verify("p-back", MESSAGE_TEXT)
 
-    assert result == "residue"
-    assert sleeper.delays == [0.25, 0.25, 0.25]
+    assert result == "delivered"
+    assert sleeper.delays == [5]
 
 
 def test_delivery_does_not_resend_when_residue_persists(tmp_path):
@@ -1043,5 +1046,48 @@ def test_flush_retries_a_plain_residue_read_before_failing(tmp_path):
             parse_message(MESSAGE_TEXT, ROLES, ALIASES))
         assert result.delivered
         assert result.reason == "residue flushed"
+
+    asyncio.run(scenario())
+
+
+def test_unreadable_composer_after_send_fails_without_resending(tmp_path):
+    async def scenario():
+        unknown_screen = "┃ garbage\n╹▀▀▀▀▀▀▀▀\n  no composer marker"
+        client = FakeClient([EMPTY_PROMPT] + [unknown_screen] * 5)
+        sleeper = FakeSleeper()
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, sleep=sleeper.sleep).deliver(
+            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert not result.delivered
+        assert result.reason == "pane input unreadable"
+        sends = [params for method, params in client.requests if method == "pane.send_input"]
+        assert len(sends) == 1, "must never resend when the composer cannot be read"
+        assert sleeper.delays == [5, 10, 30, 60, 120]
+
+    asyncio.run(scenario())
+
+
+def test_unreadable_composer_before_send_fails_immediately(tmp_path):
+    async def scenario():
+        unknown_screen = "┃ garbage\n╹▀▀▀▀▀▀▀▀\n  no composer marker"
+        client = FakeClient([unknown_screen])
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+        result = await DeliveryService(client, FakeRegistry(), state).deliver(
+            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert not result.delivered
+        assert result.reason == "pane input unreadable"
+        assert not [m for m, _ in client.requests if m == "pane.send_input"]
+
+    asyncio.run(scenario())
+
+
+def test_verify_reports_unreadable_after_full_schedule(tmp_path):
+    async def scenario():
+        client = FakeClient(["garbage"] * 5)
+        service = DeliveryService(client, FakeRegistry(), TalkbackState(tmp_path / "state.db"),
+                                  sleep=FakeSleeper().sleep)
+        assert await service._verify("p-back", MESSAGE_TEXT) == "unreadable"
 
     asyncio.run(scenario())

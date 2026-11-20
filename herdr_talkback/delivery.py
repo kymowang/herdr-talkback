@@ -31,7 +31,8 @@ class DeliveryService:
         manage_message_state: bool = True,
         verify_timeout_ms: int = 0,
         verify_poll_interval_seconds: float = 0.25,
-        post_send_check_seconds: float = 5,
+        post_send_check_seconds: float = 0,
+        verify_read_schedule: tuple = (5, 10, 30, 60, 120),
         stale_input_seconds: float = 0,
         stale_poll_seconds: float = 30,
         clock: Callable[[], float] = time.monotonic,
@@ -48,6 +49,7 @@ class DeliveryService:
         self.verify_timeout_ms = verify_timeout_ms
         self.verify_poll_interval_seconds = verify_poll_interval_seconds
         self.post_send_check_seconds = post_send_check_seconds
+        self.verify_read_schedule = tuple(verify_read_schedule)
         if stale_input_seconds < 0 or (stale_input_seconds > 0 and stale_poll_seconds <= 0):
             raise ValueError('invalid stale input timing')
         self.stale_input_seconds = stale_input_seconds
@@ -101,22 +103,13 @@ class DeliveryService:
                 await self._notify_delivery_failed(message, attempt, "target input occupied")
                 return DeliveryResult(False, "target input occupied", attempt)
             if before_state.kind == "unknown":
-                if attempt < self.max_attempts:
-                    self._update_message_state(
-                        message.message_id, MessageState.RETRYING, "target input unknown"
-                    )
-                    self.state.record_attempt(
-                        message.message_id, attempt, "checking_input", "retrying", "target input unknown"
-                    )
-                    await self.sleep(self.retry_interval_seconds)
-                    continue
-
-                self._update_message_state(message.message_id, MessageState.FAILED, "target input unknown")
+                # Cannot read the composer at all: report it instead of writing blind.
+                self._update_message_state(message.message_id, MessageState.FAILED, "pane input unreadable")
                 self.state.record_attempt(
-                    message.message_id, attempt, "checking_input", "failed", "target input unknown"
+                    message.message_id, attempt, "checking_input", "failed", "pane input unreadable"
                 )
-                await self._notify_delivery_failed(message, attempt, "target input unknown")
-                return DeliveryResult(False, "target input unknown", attempt)
+                await self._notify_delivery_failed(message, attempt, "pane input unreadable")
+                return DeliveryResult(False, "pane input unreadable", attempt)
             if before_state.kind == "residue":
                 self._update_message_state(message.message_id, MessageState.VERIFYING, "flushing residue")
                 self.state.record_attempt(
@@ -132,8 +125,6 @@ class DeliveryService:
             self.state.record_attempt(message.message_id, attempt, "sending", "verifying", "pane.send_input sent")
             self._update_message_state(message.message_id, MessageState.VERIFYING, "verifying delivery")
 
-            if self.post_send_check_seconds > 0:
-                await self.sleep(self.post_send_check_seconds)
             verified = await self._verify(pane_id, message.raw_text, agent=agent)
             if verified == "delivered":
                 self._update_message_state(message.message_id, MessageState.DELIVERED, "input cleared")
@@ -143,6 +134,12 @@ class DeliveryService:
                 return await self._flush_message_residue(
                     message.message_id, pane_id, message.raw_text, attempt, agent=agent)
 
+            if verified == "unreadable":
+                self._update_message_state(message.message_id, MessageState.FAILED, "pane input unreadable")
+                self.state.record_attempt(
+                    message.message_id, attempt, "verifying", "failed", "pane input unreadable")
+                await self._notify_delivery_failed(message, attempt, "pane input unreadable")
+                return DeliveryResult(False, "pane input unreadable", attempt)
             self._update_message_state(message.message_id, MessageState.RETRYING, "delivery ambiguous")
             self.state.record_attempt(message.message_id, attempt, "verifying", "retrying", "delivery ambiguous")
             if attempt < self.max_attempts:
@@ -268,18 +265,37 @@ class DeliveryService:
         await self.client.request("pane.send_input", {"pane_id": pane_id, "text": "", "keys": ["esc"]})
 
     async def _verify(self, pane_id: str, expected_message: str, timeout_ms=None, agent=None) -> str:
+        if timeout_ms is not None:
+            return await self._verify_polling(pane_id, expected_message, timeout_ms, agent)
+        # Re-read the composer on a fixed schedule. The input box is the only
+        # evidence that matters: unusable screens are an error, never a resend.
+        schedule = tuple(self.verify_read_schedule)
+        last_kind = "unknown"
+        for delay in schedule:
+            await self.sleep(delay)
+            after = await self._read_input(pane_id)
+            state = inspect_input(after, expected_message, allow_transformed_residue=True, agent=agent)
+            last_kind = state.kind
+            if state.kind == "submitted":
+                return "delivered"
+            if state.kind == "empty":
+                return "delivered"
+            if state.kind == "residue":
+                return "residue"
+            if state.kind == "occupied":
+                return "ambiguous"
+        return "unreadable" if last_kind == "unknown" else "ambiguous"
+
+    async def _verify_polling(self, pane_id: str, expected_message: str, timeout_ms, agent) -> str:
         after = await self._read_input(pane_id)
         state = inspect_input(after, expected_message, allow_transformed_residue=True, agent=agent)
         if state.kind == "submitted":
             return "delivered"
         timeout_seconds = (self.verify_timeout_ms if timeout_ms is None else timeout_ms) / 1000
-        # Windows Codex may render the pasted text before processing its queued
-        # Enter. Allow the configured window before treating it as stuck input.
         if state.kind == "residue" and (timeout_seconds <= 0 or after.rfind("›") <= after.rfind("❯")):
             return "residue"
         if state.kind not in {"empty", "residue"}:
             return "ambiguous"
-
         if timeout_seconds <= 0:
             return "delivered"
 
@@ -289,7 +305,6 @@ class DeliveryService:
             delay = min(poll_interval, timeout_seconds - elapsed_seconds)
             await self.sleep(delay)
             elapsed_seconds += delay
-
             after = await self._read_input(pane_id)
             state = inspect_input(after, expected_message, allow_transformed_residue=True, agent=agent)
             if state.kind == "submitted":
@@ -301,7 +316,6 @@ class DeliveryService:
                     continue
                 return "residue"
             return "ambiguous"
-
         return "residue" if state.kind == "residue" else "delivered"
 
     async def _flush_message_residue(

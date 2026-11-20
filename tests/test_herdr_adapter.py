@@ -92,7 +92,8 @@ class DeliveryRegistry:
 
 class AmbiguousDeliveryClient:
     def __init__(self):
-        self.reads = [EMPTY_PROMPT, "normal output only"]
+        # one pre-send read plus the full verification schedule
+        self.reads = [EMPTY_PROMPT] + ["normal output only"] * 5
 
     async def request(self, method, params):
         if method == "pane.read":
@@ -166,7 +167,11 @@ def test_herdr_adapter_maps_ambiguous_delivery_to_unknown():
 def test_herdr_adapter_maps_real_ambiguous_verification_to_unknown(tmp_path):
     state = TalkbackState(tmp_path / "state.db")
     state.init()
-    delivery = DeliveryService(AmbiguousDeliveryClient(), DeliveryRegistry(), state, max_attempts=1)
+    async def _no_sleep(_delay):
+        return None
+
+    delivery = DeliveryService(AmbiguousDeliveryClient(), DeliveryRegistry(), state,
+                               max_attempts=1, sleep=_no_sleep)
 
     result = asyncio.run(
         HerdrAdapter("linux-main", FakeRoleRegistry(), delivery).deliver(
@@ -174,8 +179,9 @@ def test_herdr_adapter_maps_real_ambiguous_verification_to_unknown(tmp_path):
         )
     )
 
-    assert result.state == AdapterDeliveryState.DELIVERY_UNKNOWN
-    assert result.reason == "delivery ambiguous"
+    # An unreadable composer is a hard error, not an ambiguous delivery.
+    assert result.state == AdapterDeliveryState.FAILED
+    assert result.reason == "pane input unreadable"
 
 
 def test_herdr_adapter_maps_uncleared_residue_to_unknown():
