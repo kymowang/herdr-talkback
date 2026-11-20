@@ -6,8 +6,9 @@ import pytest
 from herdr_talkback.config import load_config
 
 
-def test_network_is_opt_in(monkeypatch):
+def test_network_is_opt_in(monkeypatch, tmp_path):
     monkeypatch.setenv('HERDR_SOCKET_PATH', 'test.sock')
+    monkeypatch.setenv('APPDATA', str(tmp_path / 'AppData' / 'Roaming'))
     assert not load_config(None).network.enabled
 
 

@@ -1,7 +1,9 @@
+import os
 from pathlib import Path
 
 import pytest
 
+from herdr_talkback import config
 from herdr_talkback.config import load_config
 
 
@@ -10,6 +12,7 @@ def test_default_config_uses_herdr_socket_env(monkeypatch, tmp_path):
     monkeypatch.setenv("HERDR_SOCKET_PATH", str(socket_path))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
 
     cfg = load_config(None)
 
@@ -94,7 +97,12 @@ def test_default_config_file_is_loaded(monkeypatch, tmp_path):
     monkeypatch.setenv("HERDR_SOCKET_PATH", "/tmp/default.sock")
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    config_dir = tmp_path / ".config" / "herdr-talkback"
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
+    if os.name == "nt":
+        config_dir = (tmp_path / "AppData" / "Roaming" / "herdr" / "plugins"
+                      / "config" / "herdr-talkback")
+    else:
+        config_dir = tmp_path / ".config" / "herdr-talkback"
     config_dir.mkdir(parents=True)
     (config_dir / "config.toml").write_text(
         """
@@ -118,8 +126,46 @@ def test_default_core_node_id(monkeypatch, tmp_path):
     monkeypatch.setenv("HERDR_SOCKET_PATH", str(tmp_path / "herdr.sock"))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
 
     assert load_config(None).core_node_id == "linux-main"
+
+
+def test_default_config_path_prefers_plugin_config_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERDR_PLUGIN_CONFIG_DIR", str(tmp_path / "plugin"))
+
+    assert config.default_config_path() == tmp_path / "plugin" / "config.toml"
+
+
+def test_config_root_uses_appdata_on_windows():
+    assert config.config_root("nt", Path("/home/user"), r"C:\Users\user\AppData\Roaming") == (
+        Path(r"C:\Users\user\AppData\Roaming") / "herdr" / "plugins" / "config" / "herdr-talkback"
+    )
+
+
+def test_config_root_falls_back_to_roaming_appdata_on_windows():
+    assert config.config_root("nt", Path("/home/user"), None) == (
+        Path("/home/user") / "AppData" / "Roaming" / "herdr" / "plugins" / "config" / "herdr-talkback"
+    )
+
+
+def test_config_root_uses_home_config_on_posix():
+    assert config.config_root("posix", Path("/home/user"), None) == (
+        Path("/home/user") / ".config" / "herdr-talkback"
+    )
+
+
+def test_default_config_path_delegates_to_platform_root(monkeypatch, tmp_path):
+    monkeypatch.delenv("HERDR_PLUGIN_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
+    calls = []
+    monkeypatch.setattr(
+        config, "config_root",
+        lambda platform_name, home, appdata: calls.append((platform_name, appdata)) or tmp_path / "root",
+    )
+
+    assert config.default_config_path() == tmp_path / "root" / "config.toml"
+    assert calls == [(config.os.name, str(tmp_path / "Roaming"))]
 
 
 def test_core_node_id_from_toml(monkeypatch, tmp_path):

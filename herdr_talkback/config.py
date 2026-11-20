@@ -62,9 +62,21 @@ def default_daemon_socket_path() -> Path:
     return default_state_path().parent / "herdr-talkback.sock"
 
 
+def config_root(platform_name: str, home: Path, appdata: Optional[str]) -> Path:
+    """Return the platform-specific config directory used when Herdr sets no env var."""
+    if platform_name == "nt":
+        # Herdr keeps plugin configuration under %APPDATA% on Windows; the
+        # Unix-style ~/.config directory is not the platform default.
+        base = Path(appdata) if appdata else home / "AppData" / "Roaming"
+        return base / "herdr" / "plugins" / "config" / "herdr-talkback"
+    return home / ".config" / "herdr-talkback"
+
+
 def default_config_path() -> Path:
     root = os.environ.get("HERDR_PLUGIN_CONFIG_DIR")
-    return (Path(root) if root else Path.home() / ".config" / "herdr-talkback") / "config.toml"
+    if root:
+        return Path(root) / "config.toml"
+    return config_root(os.name, Path.home(), os.environ.get("APPDATA")) / "config.toml"
 
 
 def configured_path(value, default):

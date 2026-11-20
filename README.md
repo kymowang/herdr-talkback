@@ -175,7 +175,7 @@ herdr-talkback pane name-from-tab --all --force
 
 未安装 Python 包时可在仓库目录使用 `python3 -m herdr_talkback` 代替 `herdr-talkback`。消息头支持 `→`/`->` 和 `节点/pane` 地址；跨主机通信需先配置对端。
 
-独立 CLI 默认配置是 `~/.config/herdr-talkback/config.toml`。插件使用 `HERDR_PLUGIN_CONFIG_DIR` 与 `HERDR_PLUGIN_STATE_DIR`；初始配置中的 `{session}` 由 Herdr socket 路径的 hash 替换，使多个 Herdr 会话的数据库、队列和进程锁互不冲突。CLI 和插件必须连接同一个 `HERDR_SOCKET_PATH`。
+独立 CLI 默认配置是 `~/.config/herdr-talkback/config.toml`；Windows 上是 `%APPDATA%\herdr\plugins\config\herdr-talkback\config.toml`。插件使用 `HERDR_PLUGIN_CONFIG_DIR` 与 `HERDR_PLUGIN_STATE_DIR`；初始配置中的 `{session}` 由 Herdr socket 路径的 hash 替换，使多个 Herdr 会话的数据库、队列和进程锁互不冲突。CLI 和插件必须连接同一个 `HERDR_SOCKET_PATH`。
 
 ## 逻辑状态监控与自动继续
 
