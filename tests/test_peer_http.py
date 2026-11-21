@@ -158,7 +158,36 @@ def test_peer_can_inspect_visible_local_pane_input(tmp_path):
             result = await PeerClient('sender', peer).request('GET', '/v1/panes/worker/input')
             assert result['input']['kind'] == 'occupied'
             assert result['input']['text'] == 'waiting for instructions'
-            assert requests == [('pane.read', {'pane_id': 'pane-1', 'source': 'visible', 'format': 'ansi'})]
+            assert [entry for entry in requests if entry[0] == 'pane.read'] == [
+                ('pane.read', {'pane_id': 'pane-1', 'source': 'visible', 'format': 'ansi'})]
+            assert requests[-1] == ('pane.get', {'pane_id': 'pane-1'})
+    asyncio.run(scenario())
+
+
+def test_peer_input_reports_unknown_when_viewport_is_scrolled(tmp_path):
+    from herdr_talkback.peer_http import PeerServer, PeerClient
+    async def scenario():
+        cfg, store = make_node(tmp_path, 'receiver', 'sender')
+        cfg.peers['sender'] = replace(cfg.peers['sender'], allow_remote_control=True)
+        class Client:
+            async def request(self, method, params):
+                if method == 'pane.read':
+                    return {'read': {'text': '\x1b[2m\u203a previous submitted message\x1b[0m'}}
+                if method == 'pane.get':
+                    return {'pane': {'pane_id': 'pane-1', 'scroll': {
+                        'offset_from_bottom': 12, 'max_offset_from_bottom': 240,
+                        'viewport_rows': 30}}}
+                raise AssertionError(method)
+        class Registry:
+            client = Client()
+            async def refresh(self): pass
+            def resolve_pane(self, name): return 'pane-1'
+        async with PeerServer(cfg, store, SimpleNamespace(wake=lambda e: None), Registry()) as server:
+            peer = replace(cfg.peers['sender'], node_id='receiver', url=f'https://127.0.0.1:{server.bound_port}')
+            result = await PeerClient('sender', peer).request('GET', '/v1/panes/worker/input')
+            assert result['input']['kind'] == 'unknown'
+            assert result['input']['text'] == ''
+            assert result['input']['scroll']['offset_from_bottom'] == 12
     asyncio.run(scenario())
 
 
@@ -237,6 +266,7 @@ def test_peer_submit_folded_input_allowed_by_default_and_can_be_rejected(tmp_pat
             sends = 0
             async def request(self, method, params):
                 if method == 'pane.read': return {'read': {'text': '\u203a [Pasted Content 1099 chars]'}}
+                if method == 'pane.get': return {'pane': {}}
                 self.sends += 1; return {'type':'ok'}
         class Registry:
             client = Client()
@@ -267,6 +297,7 @@ def test_peer_submit_rejects_dim_codex_transcript_as_unknown(tmp_path):
             sends=0
             async def request(self,method,params):
                 if method == 'pane.read': return {'read':{'text':'\x1b[2m\u203a already submitted\x1b[0m'}}
+                if method == 'pane.get': return {'pane': {}}
                 self.sends+=1; return {'type':'ok'}
         class Registry:
             client=Client()
