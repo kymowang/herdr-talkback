@@ -139,6 +139,37 @@ def inspect_input(
     return InputState(kind="occupied", text_after_prompt=visible)
 
 
+# A draft that itself looks like a Talkback message: `[source→target] body`,
+# `[source->target] body`, or the folded rendering `[[source→… +NL]`.
+TALKBACK_DRAFT_RE = re.compile(r"^\[\[?[^\[\]\r\n]*(?:->|\u2192)")
+
+
+def composer_block(ansi_text: str) -> str:
+    """Return the text under the active prompt, without the chrome below it.
+
+    Status lines, separators and hints change constantly while an agent works;
+    only this block is evidence of what is sitting in the input box.
+    """
+    segment = _segment_after_last_prompt(ansi_text)
+    if segment is None:
+        return ""
+    lines = ANSI_RE.sub("", segment).replace("\r", "").split("\n")
+    block = [lines[0]]
+    for line in lines[1:]:
+        stripped = line.strip()
+        if not stripped:
+            block.append("")
+            continue
+        if SEPARATOR_RE.match(stripped) or any(hint in stripped for hint in CHROME_HINTS):
+            break
+        block.append(line)
+    return "\n".join(block).strip()
+
+
+def is_talkback_draft(text: str) -> bool:
+    return bool(TALKBACK_DRAFT_RE.match(text.strip()))
+
+
 PROMPT_LINE_RE = re.compile(r"^\s*[\u276f\u203a]")
 CHROME_HINTS = (
     "ctx ", "bypass permissions", "shift+tab", "agents", "esc", "ctrl+p",

@@ -72,6 +72,7 @@ def test_delivery_waits_for_codex_to_render_submission(tmp_path):
 
     asyncio.run(scenario())
 OCCUPIED_PROMPT = "❯ \x1b[38;2;255;255;255mhalf typed\x1b[0m"
+TALKBACK_DRAFT_PROMPT = "❯ [lead→dev-back] please handle this"
 
 
 class FakeRegistry:
@@ -973,12 +974,13 @@ def test_stale_occupied_input_is_submitted_once_before_pending_message(tmp_path)
             def clock(self): return self.now
             async def sleep(self, seconds): self.now += seconds
         timer = ClockSleeper()
-        client = FakeClient([OCCUPIED_PROMPT, OCCUPIED_PROMPT, OCCUPIED_PROMPT, OCCUPIED_PROMPT, EMPTY_PROMPT, EMPTY_PROMPT])
+        client = FakeClient([TALKBACK_DRAFT_PROMPT, TALKBACK_DRAFT_PROMPT, TALKBACK_DRAFT_PROMPT,
+                             TALKBACK_DRAFT_PROMPT, EMPTY_PROMPT, EMPTY_PROMPT])
         state = TalkbackState(tmp_path / 'state.db'); state.init()
         result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
-            sleep=timer.sleep, clock=timer.clock, stale_input_seconds=300, stale_poll_seconds=150).deliver(
+            sleep=timer.sleep, clock=timer.clock, stale_input_seconds=600, stale_poll_seconds=300).deliver(
                 parse_message(MESSAGE_TEXT, ROLES, ALIASES))
-        assert result.delivered and timer.now >= 300
+        assert result.delivered and timer.now >= 600
         sends = [p for method, p in client.requests if method == 'pane.send_input']
         assert sends == [{'pane_id':'p-back','text':'','keys':['enter']},
                          {'pane_id':'p-back','text':MESSAGE_TEXT,'keys':['enter']}]
@@ -991,13 +993,13 @@ def test_stale_input_change_restarts_the_five_minute_timer(tmp_path):
             now = 0
             def clock(self): return self.now
             async def sleep(self, seconds): self.now += seconds
-        timer = ClockSleeper(); changed = OCCUPIED_PROMPT.replace('half typed','changed draft')
-        client = FakeClient([OCCUPIED_PROMPT, changed, changed, changed, changed, EMPTY_PROMPT, EMPTY_PROMPT])
+        timer = ClockSleeper(); changed = TALKBACK_DRAFT_PROMPT.replace('please handle this', 'edited draft text')
+        client = FakeClient([TALKBACK_DRAFT_PROMPT, changed, changed, changed, changed, EMPTY_PROMPT, EMPTY_PROMPT])
         state = TalkbackState(tmp_path / 'state.db'); state.init()
         result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
-            sleep=timer.sleep, clock=timer.clock, stale_input_seconds=300, stale_poll_seconds=150).deliver(
+            sleep=timer.sleep, clock=timer.clock, stale_input_seconds=600, stale_poll_seconds=300).deliver(
                 parse_message(MESSAGE_TEXT, ROLES, ALIASES))
-        assert result.delivered and timer.now >= 450
+        assert result.delivered and timer.now >= 905
     asyncio.run(scenario())
 
 
@@ -1013,6 +1015,58 @@ def test_stale_input_does_not_submit_folded_content_with_hidden_edits(tmp_path):
     asyncio.run(scenario())
 
 
+def test_stale_folded_talkback_draft_is_submitted(tmp_path):
+    async def scenario():
+        class Timer:
+            now = 0
+            def clock(self): return self.now
+            async def sleep(self, seconds): self.now += seconds
+        timer = Timer()
+        folded = "❯ [[kb→pc-76… +1L]"
+        client = FakeClient([folded, folded, folded, folded, EMPTY_PROMPT, EMPTY_PROMPT])
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
+            sleep=timer.sleep, clock=timer.clock, stale_input_seconds=600, stale_poll_seconds=300).deliver(
+                parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert result.delivered and timer.now >= 600
+        sends = [p for method, p in client.requests if method == 'pane.send_input']
+        assert sends[0] == {'pane_id': 'p-back', 'text': '', 'keys': ['enter']}
+    asyncio.run(scenario())
+
+
+def test_stale_timer_ignores_changes_outside_the_input_box(tmp_path):
+    async def scenario():
+        class Timer:
+            now = 0
+            def clock(self): return self.now
+            async def sleep(self, seconds): self.now += seconds
+        timer = Timer()
+
+        def screen(status):
+            return TALKBACK_DRAFT_PROMPT + '\n' + '─' * 40 + '\n  ' + status
+
+        client = FakeClient([screen('tokens 10'), screen('tokens 11'), screen('tokens 12'),
+                             screen('tokens 13'), EMPTY_PROMPT, EMPTY_PROMPT])
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
+            sleep=timer.sleep, clock=timer.clock, stale_input_seconds=600, stale_poll_seconds=300).deliver(
+                parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert result.delivered and 600 <= timer.now < 905
+    asyncio.run(scenario())
+
+
+def test_stale_fallback_never_submits_a_draft_without_a_header(tmp_path):
+    async def scenario():
+        client = FakeClient([OCCUPIED_PROMPT])
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
+                                       stale_input_seconds=600).deliver(
+            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert not result.delivered and result.reason == 'target input occupied'
+        assert not any(method == 'pane.send_input' for method, _ in client.requests)
+    asyncio.run(scenario())
+
+
 def test_stale_input_that_cannot_be_confirmed_after_enter_blocks_pending_message(tmp_path):
     async def scenario():
         class Timer:
@@ -1020,10 +1074,11 @@ def test_stale_input_that_cannot_be_confirmed_after_enter_blocks_pending_message
             def clock(self): return self.now
             async def sleep(self, seconds): self.now += seconds
         timer = Timer()
-        client = FakeClient([OCCUPIED_PROMPT, OCCUPIED_PROMPT, OCCUPIED_PROMPT, OCCUPIED_PROMPT])
+        client = FakeClient([TALKBACK_DRAFT_PROMPT, TALKBACK_DRAFT_PROMPT, TALKBACK_DRAFT_PROMPT,
+                             TALKBACK_DRAFT_PROMPT])
         state = TalkbackState(tmp_path / 'state.db'); state.init()
         result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
-            sleep=timer.sleep, clock=timer.clock, stale_input_seconds=300, stale_poll_seconds=300).deliver(
+            sleep=timer.sleep, clock=timer.clock, stale_input_seconds=600, stale_poll_seconds=600).deliver(
                 parse_message(MESSAGE_TEXT, ROLES, ALIASES))
         assert not result.delivered and result.reason == 'stale input submission not confirmed'
         assert [p['text'] for m,p in client.requests if m == 'pane.send_input'] == ['']

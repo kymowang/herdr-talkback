@@ -40,7 +40,7 @@ class TalkbackConfig:
     delivery_max_attempts: int = 5
     delivery_retry_interval_seconds: float = 30
     delivery_verify_timeout_ms: int = 5000
-    delivery_stale_input_seconds: float = 300
+    delivery_stale_input_seconds: float = 600
     monitor_unknown_threshold_seconds: int = 60
     monitor_continue_cooldown_seconds: int = 120
     monitor_max_continues_per_30m: int = 3
@@ -116,7 +116,7 @@ def load_config(path: Optional[Path]) -> TalkbackConfig:
     aliases.update(_mapping(raw.get("aliases")))
     node_id = validate_node_id(core.get("node_id", "linux-main"))
     network, peers = load_network(raw, resolved_path, node_id)
-    stale_input_seconds = float(delivery.get('stale_input_seconds', 300))
+    stale_input_seconds = float(delivery.get('stale_input_seconds', 600))
     if not math.isfinite(stale_input_seconds) or stale_input_seconds < 0:
         raise ValueError('delivery.stale_input_seconds must be a finite nonnegative number')
 

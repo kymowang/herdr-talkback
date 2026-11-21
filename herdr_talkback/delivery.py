@@ -5,7 +5,8 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
-from .input_parser import inspect_input, ANSI_RE, CODEX_PASTE_BLOCK_RE, is_folded_paste_block
+from .input_parser import (composer_block, inspect_input, is_folded_paste_block,
+                           is_talkback_draft)
 from .notifier import NullNotifier, notify_alert
 from .state import TalkbackState
 from .types import MessageState, RoutedMessage
@@ -204,44 +205,37 @@ class DeliveryService:
         return result["read"]["text"]
 
     async def _recover_stale_input(self, pane_id, initial, message, attempt):
-        # Compare the entire visible screen: unrelated updates reset the timer,
-        # but a hidden or partially visible edit must never be mistaken as stable.
-        def snapshot(screen):
-            return ANSI_RE.sub('', screen).replace('\r', '')
+        # Only the composer counts: status lines, token counters and spinners
+        # change constantly while an agent works and must not reset the timer.
+        # A draft is submitted only when it is visibly a Talkback message
+        # (`[source→target]`, `[source->target]` or the folded `[[source→…`).
+        def drainable(screen):
+            return (inspect_input(screen, '').kind == 'occupied'
+                    and is_talkback_draft(composer_block(screen)))
 
-        previous = snapshot(initial)
-        def has_folded_content(screen):
-            text = snapshot(screen)
-            prompt = max(text.rfind('›'), text.rfind('❯'))
-            composer = text[prompt + 1:] if prompt >= 0 else text
-            return bool(CODEX_PASTE_BLOCK_RE.search(composer) or '[Pasted text #' in composer
-                        or is_folded_paste_block(composer))
-
-        if has_folded_content(initial):
+        if not drainable(initial):
             return 'unavailable'
+        previous = composer_block(initial)
         stable_since = self.clock()
         while True:
             remaining = self.stale_input_seconds - (self.clock() - stable_since)
             if remaining > 0:
                 await self.sleep(min(self.stale_poll_seconds, remaining))
             current = await self._read_input(pane_id)
-            current_state = inspect_input(current, '')
-            if current_state.kind == 'empty':
+            if inspect_input(current, '').kind == 'empty':
                 return 'empty'
-            if current_state.kind != 'occupied':
+            if not drainable(current):
                 return 'unavailable'
-            if has_folded_content(current):
-                return 'unavailable'
-            current_snapshot = snapshot(current)
-            if current_snapshot != previous:
-                previous = current_snapshot
+            current_text = composer_block(current)
+            if current_text != previous:
+                previous = current_text
                 stable_since = self.clock()
                 continue
             if self.clock() - stable_since < self.stale_input_seconds:
                 continue
             # One last read ensures no observable edit occurred after the timer.
             final = await self._read_input(pane_id)
-            if snapshot(final) != previous or inspect_input(final, '').kind != 'occupied':
+            if composer_block(final) != previous or not drainable(final):
                 return 'unavailable'
             self.state.record_attempt(message.message_id, attempt, 'checking_input', 'checking_input', 'stale input submitted')
             await self.client.request('pane.send_input', {'pane_id': pane_id, 'text': '', 'keys': ['enter']})
