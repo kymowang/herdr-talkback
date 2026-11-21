@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import socket
 import ssl
 import time
@@ -74,7 +75,8 @@ def inspect_token(path) -> dict:
     problems = []
     if not valid:
         problems.append('token must be 256-bit lowercase hexadecimal')
-    if mode & 0o077:
+    # Windows has no POSIX mode bits; its ACL is not visible through st_mode.
+    if os.name != 'nt' and mode & 0o077:
         problems.append('token file is readable by group/others')
     return {'ok': not problems, 'reason': '; '.join(problems), 'path': str(path),
             'length': len(text), 'mode': oct(mode)}

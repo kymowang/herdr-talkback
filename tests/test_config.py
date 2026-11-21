@@ -228,6 +228,7 @@ def test_stale_input_timeout_is_configurable_and_can_be_disabled(monkeypatch, tm
         load_config(path)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX plugin-config layout")
 def test_plugin_config_dir_wins_over_legacy_path(monkeypatch, tmp_path):
     monkeypatch.delenv("HERDR_PLUGIN_CONFIG_DIR", raising=False)
     monkeypatch.setenv("HERDR_SOCKET_PATH", "/tmp/default.sock")
@@ -243,6 +244,7 @@ def test_plugin_config_dir_wins_over_legacy_path(monkeypatch, tmp_path):
     assert load_config(None).delivery_max_attempts == 7
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX legacy config path")
 def test_legacy_config_is_used_when_plugin_config_is_absent(monkeypatch, tmp_path):
     monkeypatch.delenv("HERDR_PLUGIN_CONFIG_DIR", raising=False)
     monkeypatch.setenv("HERDR_SOCKET_PATH", "/tmp/default.sock")
