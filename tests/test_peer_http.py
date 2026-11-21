@@ -174,7 +174,7 @@ def test_peer_input_reports_unknown_when_viewport_is_scrolled(tmp_path):
                 if method == 'pane.read':
                     return {'read': {'text': '\x1b[2m\u203a previous submitted message\x1b[0m'}}
                 if method == 'pane.get':
-                    return {'pane': {'pane_id': 'pane-1', 'scroll': {
+                    return {'pane': {'pane_id': 'pane-1', 'agent_status': 'working', 'scroll': {
                         'offset_from_bottom': 12, 'max_offset_from_bottom': 240,
                         'viewport_rows': 30}}}
                 raise AssertionError(method)
@@ -188,6 +188,7 @@ def test_peer_input_reports_unknown_when_viewport_is_scrolled(tmp_path):
             assert result['input']['kind'] == 'unknown'
             assert result['input']['text'] == ''
             assert result['input']['scroll']['offset_from_bottom'] == 12
+            assert result['input']['agent_status'] == 'working'
     asyncio.run(scenario())
 
 

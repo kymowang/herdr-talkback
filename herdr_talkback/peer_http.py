@@ -71,15 +71,14 @@ class PeerServer:
             'pane_id': pane_id, 'source': 'visible', 'format': 'ansi'})
         return result['read']['text']
 
-    async def _pane_scroll(self, pane_id):
-        """Return the pane's scroll metrics when the server exposes them."""
+    async def _pane_info(self, pane_id):
+        """Return the pane record when the server exposes it."""
         try:
             result = await self.registry.client.request('pane.get', {'pane_id': pane_id})
         except Exception:  # noqa: BLE001 - older servers may not support pane.get
-            return None
+            return {}
         pane = result.get('pane') if isinstance(result, dict) else None
-        scroll = (pane or {}).get('scroll')
-        return scroll if isinstance(scroll, dict) else None
+        return pane if isinstance(pane, dict) else {}
 
     def _control_response(self, request_id, state):
         return {'protocol_version': 1, 'node_id': self.config.core_node_id,
@@ -211,7 +210,13 @@ class PeerServer:
                 return web.json_response({'error': 'pane not found'}, status=404)
             raw = await self._pane_screen(pane_id)
             state = _inspect_remote_input(raw)
-            scroll = await self._pane_scroll(pane_id)
+            pane = await self._pane_info(pane_id)
+            scroll = pane.get('scroll')
+            if not isinstance(scroll, dict):
+                scroll = None
+            agent_status = pane.get('agent_status')
+            if not isinstance(agent_status, str):
+                agent_status = None
             if scroll and scroll.get('offset_from_bottom'):
                 # The viewport is scrolled away from the live composer, so the
                 # visible screen cannot tell us what the input box holds. A dim
@@ -225,6 +230,7 @@ class PeerServer:
                 'input': {'pane_id': pane_id, 'kind': state.kind, 'text': state.text_after_prompt[:4000],
                           'visible_excerpt': excerpt[:4000], 'excerpt_truncated': len(excerpt) > 4000,
                           'folded': _has_folded_input(raw, state), 'scroll': scroll,
+                          'agent_status': agent_status,
                           'screen_sha256': hashlib.sha256(raw.encode('utf-8')).hexdigest()}})
         submit = re.fullmatch(r'/v1/panes/([A-Za-z0-9._:-]{1,128})/submit', request.path)
         if request.method == 'POST' and submit and self.registry is not None:
