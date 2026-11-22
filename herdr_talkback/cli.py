@@ -73,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
         'latest', help='Scroll a peer pane to its live input, then inspect it')
     peer_latest.add_argument('node_id')
     peer_latest.add_argument('pane')
-    peer_latest.add_argument('--key', choices=('esc', 'enter', 'end'), default='esc',
+    peer_latest.add_argument('--key', choices=('esc', 'enter'), default='enter',
                              help='Key used to leave the scrolled history view')
     peer_submit = peer_sub.add_parser('submit', help='Submit a previously inspected peer pane input')
     peer_submit.add_argument('node_id')

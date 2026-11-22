@@ -237,16 +237,16 @@ class PeerServer:
                 return web.json_response({'error': 'receiver storage instance changed'}, status=412)
             payload = await request.json(loads=lambda text: json.loads(text, parse_constant=_invalid_constant))
             if (not isinstance(payload, dict) or set(payload) - {'key'}
-                    or payload.get('key', 'esc') not in ('esc', 'enter', 'end')):
+                    or payload.get('key', 'enter') not in ('esc', 'enter')):
                 raise ValueError('invalid latest request')
-            key = payload.get('key', 'esc')
+            key = payload.get('key', 'enter')
             pane_id = await self._pane_id(pane_latest.group(1))
             if pane_id is None:
                 return web.json_response({'error': 'pane not found'}, status=404)
             before = await self._input_payload(pane_id)
             if before['agent_status'] == 'working':
                 return web.json_response({'error': 'agent is working; the key would interrupt it'}, status=409)
-            if before['kind'] == 'occupied' and key != 'end':
+            if before['kind'] == 'occupied':
                 return web.json_response({'error': f'input is occupied; {key} could lose a draft'}, status=409)
             await self.registry.client.request('pane.send_input', {
                 'pane_id': pane_id, 'text': '', 'keys': [key]})

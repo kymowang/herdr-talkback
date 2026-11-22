@@ -193,9 +193,9 @@ def test_peer_latest_scrolls_to_live_input_only_when_safe(tmp_path):
             client = PeerClient('sender', peer)
             result = await client.request('POST', '/v1/panes/worker/latest', {})
             assert result['recovered'] is True
-            assert result['key'] == 'esc'
+            assert result['key'] == 'enter'
             assert result['input']['kind'] == 'empty'
-            assert registry.client.sends == [{'pane_id': 'pane-1', 'text': '', 'keys': ['esc']}]
+            assert registry.client.sends == [{'pane_id': 'pane-1', 'text': '', 'keys': ['enter']}]
 
             registry.client.status = 'working'
             registry.client.screen = '\u203a user draft'
@@ -205,12 +205,8 @@ def test_peer_latest_scrolls_to_live_input_only_when_safe(tmp_path):
 
             registry.client.status = 'done'
             with pytest.raises(PeerHTTPError) as exc:
-                await client.request('POST', '/v1/panes/worker/latest', {})
+                await client.request('POST', '/v1/panes/worker/latest', {'key': 'esc'})
             assert exc.value.status == 409 and len(registry.client.sends) == 1
-
-            result = await client.request('POST', '/v1/panes/worker/latest', {'key': 'end'})
-            assert result['key'] == 'end'
-            assert registry.client.sends[-1] == {'pane_id': 'pane-1', 'text': '', 'keys': ['end']}
 
             with pytest.raises(PeerHTTPError) as exc:
                 await client.request('POST', '/v1/panes/worker/latest', {'key': 'tab'})
