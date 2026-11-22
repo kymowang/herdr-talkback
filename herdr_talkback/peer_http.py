@@ -235,19 +235,24 @@ class PeerServer:
                 return web.json_response({'error': 'remote control not enabled for peer'}, status=403)
             if request.headers.get('X-Talkback-Instance') != self.store.instance_id:
                 return web.json_response({'error': 'receiver storage instance changed'}, status=412)
+            payload = await request.json(loads=lambda text: json.loads(text, parse_constant=_invalid_constant))
+            if (not isinstance(payload, dict) or set(payload) - {'key'}
+                    or payload.get('key', 'esc') not in ('esc', 'enter', 'end')):
+                raise ValueError('invalid latest request')
+            key = payload.get('key', 'esc')
             pane_id = await self._pane_id(pane_latest.group(1))
             if pane_id is None:
                 return web.json_response({'error': 'pane not found'}, status=404)
             before = await self._input_payload(pane_id)
             if before['agent_status'] == 'working':
-                return web.json_response({'error': 'agent is working; escape would interrupt it'}, status=409)
-            if before['kind'] == 'occupied':
-                return web.json_response({'error': 'input is occupied; escape could discard a draft'}, status=409)
+                return web.json_response({'error': 'agent is working; the key would interrupt it'}, status=409)
+            if before['kind'] == 'occupied' and key != 'end':
+                return web.json_response({'error': f'input is occupied; {key} could lose a draft'}, status=409)
             await self.registry.client.request('pane.send_input', {
-                'pane_id': pane_id, 'text': '', 'keys': ['esc']})
+                'pane_id': pane_id, 'text': '', 'keys': [key]})
             await asyncio.sleep(0.2)
             return web.json_response({'protocol_version': 1, 'node_id': self.config.core_node_id,
-                'instance_id': self.store.instance_id, 'recovered': True,
+                'instance_id': self.store.instance_id, 'recovered': True, 'key': key,
                 'input': await self._input_payload(pane_id)})
         submit = re.fullmatch(r'/v1/panes/([A-Za-z0-9._:-]{1,128})/submit', request.path)
         if request.method == 'POST' and submit and self.registry is not None:

@@ -73,6 +73,8 @@ def build_parser() -> argparse.ArgumentParser:
         'latest', help='Scroll a peer pane to its live input, then inspect it')
     peer_latest.add_argument('node_id')
     peer_latest.add_argument('pane')
+    peer_latest.add_argument('--key', choices=('esc', 'enter', 'end'), default='esc',
+                             help='Key used to leave the scrolled history view')
     peer_submit = peer_sub.add_parser('submit', help='Submit a previously inspected peer pane input')
     peer_submit.add_argument('node_id')
     peer_submit.add_argument('pane')
@@ -409,7 +411,7 @@ async def _main_async(args) -> int:
             if args.peer_command == 'input':
                 response = await client.request('GET', f'/v1/panes/{args.pane}/input')
             elif args.peer_command == 'latest':
-                response = await client.request('POST', f'/v1/panes/{args.pane}/latest', {})
+                response = await client.request('POST', f'/v1/panes/{args.pane}/latest', {'key': args.key})
             elif args.peer_command == 'submit':
                 payload = {'pane_id': args.pane_id, 'screen_sha256': args.screen_sha256, 'request_id': request_id}
                 if args.reject_folded:
