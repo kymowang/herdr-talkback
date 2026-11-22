@@ -164,6 +164,51 @@ def test_peer_can_inspect_visible_local_pane_input(tmp_path):
     asyncio.run(scenario())
 
 
+def test_peer_latest_scrolls_to_live_input_only_when_safe(tmp_path):
+    from herdr_talkback.peer_http import PeerServer, PeerClient, PeerHTTPError
+    async def scenario():
+        cfg, store = make_node(tmp_path, 'receiver', 'sender')
+        cfg.peers['sender'] = replace(cfg.peers['sender'], allow_remote_control=True)
+        class Client:
+            status = 'done'
+            screen = '\x1b[2m\u203a earlier message\x1b[0m'
+            sends = []
+            async def request(self, method, params):
+                if method == 'pane.read': return {'read': {'text': self.screen}}
+                if method == 'pane.get':
+                    return {'pane': {'pane_id': 'pane-1', 'agent_status': self.status,
+                                     'scroll': {'offset_from_bottom': 0}}}
+                if method == 'pane.send_input':
+                    self.sends.append(params)
+                    self.screen = '\u203a \x1b[2mAsk Codex to do anything\x1b[0m'
+                    return {'type': 'ok'}
+                raise AssertionError(method)
+        class Registry:
+            client = Client()
+            async def refresh(self): pass
+            def resolve_pane(self, name): return 'pane-1'
+        registry = Registry()
+        async with PeerServer(cfg, store, SimpleNamespace(wake=lambda e: None), registry) as server:
+            peer = replace(cfg.peers['sender'], node_id='receiver', url=f'https://127.0.0.1:{server.bound_port}')
+            client = PeerClient('sender', peer)
+            result = await client.request('POST', '/v1/panes/worker/latest', {})
+            assert result['recovered'] is True
+            assert result['input']['kind'] == 'empty'
+            assert registry.client.sends == [{'pane_id': 'pane-1', 'text': '', 'keys': ['esc']}]
+
+            registry.client.status = 'working'
+            with pytest.raises(PeerHTTPError) as exc:
+                await client.request('POST', '/v1/panes/worker/latest', {})
+            assert exc.value.status == 409 and len(registry.client.sends) == 1
+
+            registry.client.status = 'done'
+            registry.client.screen = '\u203a user draft'
+            with pytest.raises(PeerHTTPError) as exc:
+                await client.request('POST', '/v1/panes/worker/latest', {})
+            assert exc.value.status == 409 and len(registry.client.sends) == 1
+    asyncio.run(scenario())
+
+
 def test_peer_input_reports_unknown_when_viewport_is_scrolled(tmp_path):
     from herdr_talkback.peer_http import PeerServer, PeerClient
     async def scenario():

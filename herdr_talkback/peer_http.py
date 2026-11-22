@@ -80,6 +80,26 @@ class PeerServer:
         pane = result.get('pane') if isinstance(result, dict) else None
         return pane if isinstance(pane, dict) else {}
 
+    async def _input_payload(self, pane_id):
+        from .input_parser import ANSI_RE, InputState, _segment_after_last_prompt
+        raw = await self._pane_screen(pane_id)
+        state = _inspect_remote_input(raw)
+        pane = await self._pane_info(pane_id)
+        scroll = pane.get('scroll') if isinstance(pane.get('scroll'), dict) else None
+        agent_status = pane.get('agent_status') if isinstance(pane.get('agent_status'), str) else None
+        if scroll and scroll.get('offset_from_bottom'):
+            # The viewport is scrolled away from the live composer, so the
+            # visible screen cannot tell us what the input box holds. A dim
+            # transcript echo there must not be reported as an empty input.
+            state = InputState(kind='unknown', text_after_prompt='')
+        segment = _segment_after_last_prompt(raw)
+        excerpt = ANSI_RE.sub('', segment).replace('\r', '') if segment is not None else state.text_after_prompt
+        return {'pane_id': pane_id, 'kind': state.kind, 'text': state.text_after_prompt[:4000],
+                'visible_excerpt': excerpt[:4000], 'excerpt_truncated': len(excerpt) > 4000,
+                'folded': _has_folded_input(raw, state), 'scroll': scroll,
+                'agent_status': agent_status,
+                'screen_sha256': hashlib.sha256(raw.encode('utf-8')).hexdigest()}
+
     def _control_response(self, request_id, state):
         return {'protocol_version': 1, 'node_id': self.config.core_node_id,
                 'instance_id': self.store.instance_id, 'request_id': request_id, 'state': state}
@@ -201,37 +221,34 @@ class PeerServer:
                 return web.json_response({**self._control_response(request_id, job['state']), 'detail': job['detail']})
         pane_input = re.fullmatch(r'/v1/panes/([A-Za-z0-9._:-]{1,128})/input', request.path)
         if request.method == 'GET' and pane_input and self.registry is not None:
-            from .input_parser import ANSI_RE, _segment_after_last_prompt
             if not getattr(self.config.peers[peer], 'allow_remote_control', False):
                 return web.json_response({'error': 'remote control not enabled for peer'}, status=403)
             target = pane_input.group(1)
             pane_id = await self._pane_id(target)
             if pane_id is None:
                 return web.json_response({'error': 'pane not found'}, status=404)
-            raw = await self._pane_screen(pane_id)
-            state = _inspect_remote_input(raw)
-            pane = await self._pane_info(pane_id)
-            scroll = pane.get('scroll')
-            if not isinstance(scroll, dict):
-                scroll = None
-            agent_status = pane.get('agent_status')
-            if not isinstance(agent_status, str):
-                agent_status = None
-            if scroll and scroll.get('offset_from_bottom'):
-                # The viewport is scrolled away from the live composer, so the
-                # visible screen cannot tell us what the input box holds. A dim
-                # transcript echo there must not be reported as an empty input.
-                from .input_parser import InputState
-                state = InputState(kind='unknown', text_after_prompt='')
-            segment = _segment_after_last_prompt(raw)
-            excerpt = ANSI_RE.sub('', segment).replace('\r', '') if segment is not None else state.text_after_prompt
             return web.json_response({'protocol_version': 1, 'node_id': self.config.core_node_id,
-                'instance_id': self.store.instance_id,
-                'input': {'pane_id': pane_id, 'kind': state.kind, 'text': state.text_after_prompt[:4000],
-                          'visible_excerpt': excerpt[:4000], 'excerpt_truncated': len(excerpt) > 4000,
-                          'folded': _has_folded_input(raw, state), 'scroll': scroll,
-                          'agent_status': agent_status,
-                          'screen_sha256': hashlib.sha256(raw.encode('utf-8')).hexdigest()}})
+                'instance_id': self.store.instance_id, 'input': await self._input_payload(pane_id)})
+        pane_latest = re.fullmatch(r'/v1/panes/([A-Za-z0-9._:-]{1,128})/latest', request.path)
+        if request.method == 'POST' and pane_latest and self.registry is not None:
+            if not getattr(self.config.peers[peer], 'allow_remote_control', False):
+                return web.json_response({'error': 'remote control not enabled for peer'}, status=403)
+            if request.headers.get('X-Talkback-Instance') != self.store.instance_id:
+                return web.json_response({'error': 'receiver storage instance changed'}, status=412)
+            pane_id = await self._pane_id(pane_latest.group(1))
+            if pane_id is None:
+                return web.json_response({'error': 'pane not found'}, status=404)
+            before = await self._input_payload(pane_id)
+            if before['agent_status'] == 'working':
+                return web.json_response({'error': 'agent is working; escape would interrupt it'}, status=409)
+            if before['kind'] == 'occupied':
+                return web.json_response({'error': 'input is occupied; escape could discard a draft'}, status=409)
+            await self.registry.client.request('pane.send_input', {
+                'pane_id': pane_id, 'text': '', 'keys': ['esc']})
+            await asyncio.sleep(0.2)
+            return web.json_response({'protocol_version': 1, 'node_id': self.config.core_node_id,
+                'instance_id': self.store.instance_id, 'recovered': True,
+                'input': await self._input_payload(pane_id)})
         submit = re.fullmatch(r'/v1/panes/([A-Za-z0-9._:-]{1,128})/submit', request.path)
         if request.method == 'POST' and submit and self.registry is not None:
             if not getattr(self.config.peers[peer], 'allow_remote_control', False):

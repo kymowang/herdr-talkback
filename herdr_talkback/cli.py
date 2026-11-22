@@ -69,6 +69,10 @@ def build_parser() -> argparse.ArgumentParser:
     peer_input = peer_sub.add_parser('input', help='Inspect a peer pane input')
     peer_input.add_argument('node_id')
     peer_input.add_argument('pane')
+    peer_latest = peer_sub.add_parser(
+        'latest', help='Scroll a peer pane to its live input, then inspect it')
+    peer_latest.add_argument('node_id')
+    peer_latest.add_argument('pane')
     peer_submit = peer_sub.add_parser('submit', help='Submit a previously inspected peer pane input')
     peer_submit.add_argument('node_id')
     peer_submit.add_argument('pane')
@@ -197,7 +201,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         args.config = _discover_plugin_config()
     elif args.command == 'pane' and args.pane_command == 'identity' and args.config is None:
         args.config = _discover_plugin_config()
-    elif args.command == 'peer' and args.peer_command in ('diag', 'input', 'submit', 'submit-status', 'update', 'update-status') and args.config is None:
+    elif args.command == 'peer' and args.peer_command in ('diag', 'input', 'latest', 'submit', 'submit-status', 'update', 'update-status') and args.config is None:
         args.config = _discover_plugin_config()
     try:
         return asyncio.run(_main_async(args))
@@ -390,7 +394,7 @@ async def _main_async(args) -> int:
             print(path)
         return 0
 
-    if args.command == 'peer' and args.peer_command in ('input', 'submit', 'submit-status', 'update', 'update-status'):
+    if args.command == 'peer' and args.peer_command in ('input', 'latest', 'submit', 'submit-status', 'update', 'update-status'):
         from .peer_http import PeerClient
         cfg = load_config(args.config)
         request_id = (args.request_id or 'req_' + uuid.uuid4().hex) if args.peer_command in ('submit', 'update') else None
@@ -399,11 +403,13 @@ async def _main_async(args) -> int:
         try:
             if args.node_id not in cfg.peers:
                 raise ValueError('peer not configured: ' + args.node_id)
-            if args.peer_command in ('input', 'submit') and not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', args.pane):
+            if args.peer_command in ('input', 'latest', 'submit') and not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', args.pane):
                 raise ValueError('invalid remote pane name or ID')
             client = PeerClient(cfg.core_node_id, cfg.peers[args.node_id])
             if args.peer_command == 'input':
                 response = await client.request('GET', f'/v1/panes/{args.pane}/input')
+            elif args.peer_command == 'latest':
+                response = await client.request('POST', f'/v1/panes/{args.pane}/latest', {})
             elif args.peer_command == 'submit':
                 payload = {'pane_id': args.pane_id, 'screen_sha256': args.screen_sha256, 'request_id': request_id}
                 if args.reject_folded:
