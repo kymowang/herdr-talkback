@@ -11,6 +11,14 @@ from ..peer_http import PeerClient, PeerHTTPError, PeerProtocolError
 from ..peer_state import PeerInstanceChanged, TERMINAL, message_envelope
 
 
+UNCONFIRMED_REASONS = (
+    'paste visibility not confirmed',
+    'message residue not cleared',
+    'delivery ambiguous',
+    'submission state unknown',
+)
+
+
 def retry_delay(count):
     return (1, 2, 5, 10, 30, 60)[min(max(count - 1, 0), 5)] * random.uniform(0.8, 1.0)
 
@@ -78,7 +86,15 @@ class PeerAdapter:
                 if state in TERMINAL:
                     self.store.state.record_event('peer_receipt', {'peer': peer_id,
                         'message_id': message.message_id, 'state': state})
-                    return AdapterDeliveryResult(AdapterDeliveryState(state), str(receipt.get('reason', ''))[:1024], attempt)
+                    reason = str(receipt.get('reason', ''))[:1024]
+                    reported = AdapterDeliveryState(state)
+                    # A peer that could not confirm the input must not be
+                    # recorded as a confirmed failure: the message may already
+                    # be in its pane, so only manual review can decide.
+                    if reported is AdapterDeliveryState.FAILED and any(
+                            value in reason.lower() for value in UNCONFIRMED_REASONS):
+                        reported = AdapterDeliveryState.DELIVERY_UNKNOWN
+                    return AdapterDeliveryResult(reported, reason, attempt)
                 polls += 1
                 delay = self.retry_delay(polls)
             except PeerInstanceChanged:

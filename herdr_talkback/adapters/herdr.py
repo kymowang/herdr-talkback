@@ -76,7 +76,8 @@ class HerdrAdapter:
 
     @staticmethod
     def _failure_state(reason: str) -> AdapterDeliveryState:
-        unknown_reasons = ("ambiguous", "residue not cleared", "submission state unknown")
+        unknown_reasons = ("ambiguous", "residue not cleared", "submission state unknown",
+                           "paste visibility not confirmed")
         if any(value in reason.lower() for value in unknown_reasons):
             return AdapterDeliveryState.DELIVERY_UNKNOWN
         return AdapterDeliveryState.FAILED

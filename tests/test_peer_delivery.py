@@ -46,6 +46,30 @@ def test_peer_adapter_tracks_remote_delivery_without_duplicate_input(tmp_path):
     asyncio.run(scenario())
 
 
+def test_peer_adapter_reports_unconfirmed_paste_as_unknown(tmp_path):
+    from herdr_talkback.adapters.peer import PeerAdapter
+
+    async def scenario():
+        cfg, store = make_node(tmp_path, 'sender', 'receiver')
+        adapter = PeerAdapter(cfg, store, EndpointRegistry(), retry_delay=lambda count: 0)
+
+        class Client:
+            async def request(self, method, path, envelope=None, *, expected_instance=None):
+                if method == 'GET':
+                    return {'instance_id': 'inst'}
+                assert path == '/v1/messages'
+                return {'instance_id': 'inst', 'message_id': 'msg_delivery',
+                        'state': 'failed', 'reason': 'paste visibility not confirmed'}
+
+        adapter.clients['receiver'] = Client()
+        result = await adapter.deliver(
+            message(), DeliveryLease('msg_delivery', 'lease', 'peer', lambda reason: True))
+        assert result.state.value == 'delivery_unknown'
+        assert result.reason == 'paste visibility not confirmed'
+
+    asyncio.run(scenario())
+
+
 def test_peer_adapter_does_not_replay_after_receiver_reset(tmp_path):
     from herdr_talkback.adapters.peer import PeerAdapter
 
