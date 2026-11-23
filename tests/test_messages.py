@@ -38,6 +38,13 @@ def test_pane_id_target_bypasses_role_list():
     assert msg.target_endpoint == "linux-main/w2:p1A"
 
 
+def test_pane_id_source_bypasses_role_list():
+    msg = parse_message("[w2:p1A→dev-back] ping", ROLES, ALIASES)
+
+    assert msg.source_endpoint == "linux-main/w2:p1A"
+    assert msg.target_endpoint == "linux-main/dev-back"
+
+
 def test_parse_alias_target():
     msg = parse_message("[assistant→system-bus] 诊断完成", (), ALIASES)
 

@@ -68,6 +68,12 @@ def test_pane_ids_resolve_and_duplicate_names_are_ambiguous():
         assert registry.resolve_pane('w2:p1G') == 'w2:p1G'
         with pytest.raises(RoleResolutionError, match=r'ambiguous.*w2:p1A, w2:p1G'):
             registry.resolve_pane('cmd')
+        with pytest.raises(RoleResolutionError, match=r'source pane is ambiguous'):
+            registry.check_source('cmd')
+        assert registry.check_source('w2:p1A') == 'w2:p1A'
+        assert registry.check_source('lead') == 'lead'
+        with pytest.raises(RoleResolutionError, match='source pane not found'):
+            registry.check_source('ghost')
         assert 'cmd' not in registry.snapshot()
 
     asyncio.run(scenario())

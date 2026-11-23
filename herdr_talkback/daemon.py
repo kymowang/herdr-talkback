@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
 
 from .transport import LocalServer, open_local_connection, start_local_server
-from .addressing import EndpointAddress, parse_endpoint_address
+from .addressing import EndpointAddress, is_pane_id, parse_endpoint_address
 from .core_types import CoreMessage, CoreMessageState
 from .messages import HEADER_RE, MessageParseError, parse_message
 from .notifier import NullNotifier, notify_alert
@@ -176,8 +176,16 @@ class DaemonMessageRouter:
                     known_sources=known_sources,
                     source_hint=source_hint,
                 )
+                from .roles import RoleResolutionError
+                check_source = getattr(self.registry, 'check_source', None)
+                if check_source is not None:
+                    try:
+                        check_source(message.source_endpoint.split('/', 1)[-1])
+                    except RoleResolutionError as exc:
+                        raise MessageParseError(str(exc)) from exc
                 if payload.get('type') == 'whoami':
-                    if message.source.split('/')[-1] not in self.registry.snapshot():
+                    if message.source.split('/')[-1] not in self.registry.snapshot() and not is_pane_id(
+                            message.source.split('/')[-1]):
                         raise MessageParseError('whoami source must be an active local pane')
                     message = replace(message, metadata={'talkback_whoami': 1})
                 target = parse_endpoint_address(message.target_endpoint)
@@ -193,7 +201,10 @@ class DaemonMessageRouter:
                     validate_envelope(self.config.core_node_id, target.node_id, message_envelope(message))
                     pane_id = ''
                 else:
-                    pane_id = self.registry.resolve_pane(target.endpoint_id)
+                    try:
+                        pane_id = self.registry.resolve_pane(target.endpoint_id)
+                    except RoleResolutionError as exc:
+                        raise MessageParseError(str(exc)) from exc
             except MessageParseError as exc:
                 await self._notify_send_failed(raw_message, str(exc))
                 return {"ok": False, "error": str(exc)}
@@ -257,6 +268,11 @@ class DaemonMessageRouter:
         snapshot = getattr(self.registry, "snapshot", None)
         if snapshot is not None:
             known.update(snapshot())
+        # Keep ambiguous labels known so the source check can report that the
+        # name is shared instead of pretending it is an unknown role.
+        addressable = getattr(self.registry, "addressable_names", None)
+        if addressable is not None:
+            known.update(addressable())
         list_panes = getattr(self.operator_store, "panes", None) if self.operator_store is not None else None
         if list_panes is not None:
             prefix = self.config.core_node_id + "/"

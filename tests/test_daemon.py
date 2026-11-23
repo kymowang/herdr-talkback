@@ -243,6 +243,11 @@ class FakeRegistry:
             raise RoleResolutionError(f"role has no active pane: {role}")
         return "p-back"
 
+    def check_source(self, name):
+        if name != "lead":
+            raise RoleResolutionError(f"source pane not found: {name}")
+        return name
+
 
 class SourceRegistry:
     labels = {"w1:p9": "monitor", "w1:p2": "codex2"}
@@ -262,9 +267,14 @@ class SourceRegistry:
 
     def resolve_pane(self, role):
         for pane_id, name in self.labels.items():
-            if name == role:
+            if name == role or pane_id == role:
                 return pane_id
         raise RoleResolutionError(f"role has no active pane: {role}")
+
+    def check_source(self, name):
+        if name in self.labels or name in self.labels.values():
+            return name
+        raise RoleResolutionError(f"source pane not found: {name}")
 
 
 class FakeDispatcher:
@@ -352,6 +362,43 @@ def test_daemon_router_accepts_live_pane_label_as_source(tmp_path):
         assert response['ok'] is True
         assert response['source'] == 'monitor'
         assert response['source_endpoint'] == 'openclaw/monitor'
+    asyncio.run(check())
+
+
+def test_daemon_rejects_ambiguous_source_and_target(tmp_path):
+    async def check():
+        state = TalkbackState(tmp_path / 'state.db')
+        state.init()
+        cfg = SimpleNamespace(core_node_id='openclaw', roles=(), aliases={})
+
+        class AmbiguousRegistry:
+            async def refresh(self): pass
+            def snapshot(self):
+                return {'unique': SimpleNamespace(name='unique', pane_id='w1:p1')}
+            def addressable_names(self): return {'unique', 'cmd'}
+            def resolve_pane(self, name):
+                if name == 'cmd':
+                    raise RoleResolutionError(
+                        'pane name is ambiguous: cmd (w1:p2, w1:p3); use a pane ID')
+                if name in ('unique', 'w1:p1'):
+                    return 'w1:p1'
+                raise RoleResolutionError(f'role has no active pane: {name}')
+            def check_source(self, name):
+                if name == 'cmd':
+                    raise RoleResolutionError(
+                        'source pane is ambiguous: cmd (w1:p2, w1:p3); use a pane ID')
+                if name in ('unique', 'w1:p1'):
+                    return name
+                raise RoleResolutionError(f'source pane not found: {name}')
+
+        router = DaemonMessageRouter(cfg, AmbiguousRegistry(), FakeDispatcher(), state=state)
+        bad_source = await router.handle({'type': 'send', 'message': '[cmd->unique] task'})
+        assert bad_source['ok'] is False
+        assert 'source pane is ambiguous' in bad_source['error']
+        bad_target = await router.handle({'type': 'send', 'message': '[unique->cmd] task'})
+        assert bad_target['ok'] is False
+        assert 'ambiguous' in bad_target['error']
+
     asyncio.run(check())
 
 

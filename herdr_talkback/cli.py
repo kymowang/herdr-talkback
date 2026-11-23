@@ -732,6 +732,7 @@ async def _main_async(args) -> int:
                 known_sources=known_sources,
                 source_hint=source_hint,
             )
+            registry.check_source(message.source_endpoint.split('/', 1)[-1])
             target_address = parse_endpoint_address(message.target_endpoint)
             if isinstance(target_address, EndpointAddress) and target_address.node_id != local_node_id:
                 raise ValueError('remote messages require the durable daemon path; --direct is local-only')

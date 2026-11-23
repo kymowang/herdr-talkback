@@ -58,6 +58,10 @@ class RoleRegistry:
     def panes(self) -> tuple[AgentInfo, ...]:
         return tuple(self._by_pane_info.values())
 
+    def addressable_names(self) -> set[str]:
+        """Every live pane label, including names that are ambiguous."""
+        return set(self._by_role) | set(self._ambiguous)
+
     def resolve_role(self, role: str) -> str:
         return self.aliases.get(role, role)
 
@@ -67,17 +71,30 @@ class RoleRegistry:
             return info.pane_id
         return self.get_agent(role).pane_id
 
+    def check_source(self, name: str) -> str:
+        """A source must name exactly one live pane; return the resolved name."""
+        if name in self._by_pane_info:
+            return name
+        resolved = self.resolve_role(name)
+        self._raise_if_ambiguous(resolved, 'source pane')
+        if resolved not in self._by_role:
+            raise RoleResolutionError(f"source pane not found: {name}")
+        return resolved
+
     def get_agent(self, role: str) -> AgentInfo:
         resolved_role = self.resolve_role(role)
-        conflicts = self._ambiguous.get(resolved_role)
-        if conflicts:
-            raise RoleResolutionError(
-                "pane name is ambiguous: {0} ({1}); use a pane ID".format(
-                    resolved_role, ", ".join(conflicts)))
+        self._raise_if_ambiguous(resolved_role, 'pane name')
         agent = self._by_role.get(resolved_role)
         if agent is None:
             raise RoleResolutionError(f"role has no active pane: {role}")
         return agent
+
+    def _raise_if_ambiguous(self, name: str, kind: str) -> None:
+        conflicts = self._ambiguous.get(name)
+        if conflicts:
+            raise RoleResolutionError(
+                "{0} is ambiguous: {1} ({2}); use a pane ID".format(
+                    kind, name, ", ".join(conflicts)))
 
     def role_for_pane(self, pane_id: str) -> Optional[str]:
         return self._by_pane.get(pane_id)

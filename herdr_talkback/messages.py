@@ -66,10 +66,11 @@ def parse_message(
     else:
         source_name = source_address.endpoint_id
         source_endpoint = EndpointAddress(local_node_id, source_name).qualified
-    if allowed and source_name not in allowed and source_name not in aliases:
-        raise MessageParseError(f"unknown source role or alias: {source_name}")
-    if known_sources is not None and source_name not in set(known_sources):
-        raise MessageParseError(_unknown_source(source_name, local_node_id, source_hint))
+    if not is_pane_id(source_name):
+        if allowed and source_name not in allowed and source_name not in aliases:
+            raise MessageParseError(f"unknown source role or alias: {source_name}")
+        if known_sources is not None and source_name not in set(known_sources):
+            raise MessageParseError(_unknown_source(source_name, local_node_id, source_hint))
 
     if isinstance(target_address, EndpointAddress):
         resolved_target = target
