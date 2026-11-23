@@ -142,6 +142,9 @@ def inspect_input(
 # A draft that itself looks like a Talkback message: `[source→target] body`,
 # `[source->target] body`, or the folded rendering `[[source→… +NL]`.
 TALKBACK_DRAFT_RE = re.compile(r"^\[\[?[^\[\]\r\n]*(?:->|\u2192)")
+# A long multi-line draft scrolls inside the composer, pushing its header out of
+# view; the CLI then marks hidden lines above with an up arrow on a visible line.
+SCROLLED_COMPOSER_RE = re.compile(r"\u2191[ \t]*$", re.MULTILINE)
 
 
 def composer_block(ansi_text: str) -> str:
@@ -167,7 +170,11 @@ def composer_block(ansi_text: str) -> str:
 
 
 def is_talkback_draft(text: str) -> bool:
-    return bool(TALKBACK_DRAFT_RE.match(text.strip()))
+    stripped = text.strip()
+    if TALKBACK_DRAFT_RE.match(stripped):
+        return True
+    lines = [line for line in stripped.split("\n") if line.strip()]
+    return len(lines) >= 2 and SCROLLED_COMPOSER_RE.search(stripped) is not None
 
 
 PROMPT_LINE_RE = re.compile(r"^\s*[\u276f\u203a]")

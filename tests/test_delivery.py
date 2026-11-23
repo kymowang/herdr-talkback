@@ -1034,6 +1034,28 @@ def test_stale_folded_talkback_draft_is_submitted(tmp_path):
     asyncio.run(scenario())
 
 
+def test_stale_scrolled_multiline_draft_is_submitted(tmp_path):
+    async def scenario():
+        class Timer:
+            now = 0
+            def clock(self): return self.now
+            async def sleep(self, seconds): self.now += seconds
+        timer = Timer()
+        # The header scrolled above the viewport; the up arrow marks hidden lines.
+        scrolled = ('❯ 确做法是改打包（把 migration 打进 .run）、改部署还是改 kb           ↑\n'
+                    '  pack（PGDATA 带上运行结构）？\n'
+                    '  [Pasted Content 3364 chars]')
+        client = FakeClient([scrolled, scrolled, scrolled, scrolled, EMPTY_PROMPT, EMPTY_PROMPT])
+        state = TalkbackState(tmp_path / 'state.db'); state.init()
+        result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
+            sleep=timer.sleep, clock=timer.clock, stale_input_seconds=600, stale_poll_seconds=300).deliver(
+                parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert result.delivered and timer.now >= 600
+        sends = [p for method, p in client.requests if method == 'pane.send_input']
+        assert sends[0] == {'pane_id': 'p-back', 'text': '', 'keys': ['enter']}
+    asyncio.run(scenario())
+
+
 def test_stale_timer_ignores_changes_outside_the_input_box(tmp_path):
     async def scenario():
         class Timer:
