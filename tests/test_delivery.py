@@ -1003,15 +1003,23 @@ def test_stale_input_change_restarts_the_five_minute_timer(tmp_path):
     asyncio.run(scenario())
 
 
-def test_stale_input_does_not_submit_folded_content_with_hidden_edits(tmp_path):
+def test_stale_folded_input_with_hidden_edits_is_submitted(tmp_path):
     async def scenario():
+        class Timer:
+            now = 0
+            def clock(self): return self.now
+            async def sleep(self, seconds): self.now += seconds
+        timer = Timer()
         collapsed = '\u203a [Pasted Content 1099 chars]other text\n  tab to queue message'
-        client = FakeClient([collapsed])
+        client = FakeClient([collapsed, collapsed, collapsed, EMPTY_PROMPT, EMPTY_PROMPT])
         state = TalkbackState(tmp_path / 'state.db'); state.init()
         result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
-                                       stale_input_seconds=300).deliver(parse_message(MESSAGE_TEXT, ROLES, ALIASES))
-        assert not result.delivered
-        assert not any(method == 'pane.send_input' for method, _ in client.requests)
+                                       sleep=timer.sleep, clock=timer.clock,
+                                       stale_input_seconds=300, stale_poll_seconds=300).deliver(
+            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        assert result.delivered and timer.now >= 300
+        sends = [p for method, p in client.requests if method == 'pane.send_input']
+        assert sends[0] == {'pane_id': 'p-back', 'text': '', 'keys': ['enter']}
     asyncio.run(scenario())
 
 
@@ -1077,15 +1085,23 @@ def test_stale_timer_ignores_changes_outside_the_input_box(tmp_path):
     asyncio.run(scenario())
 
 
-def test_stale_fallback_never_submits_a_draft_without_a_header(tmp_path):
+def test_stale_occupied_draft_without_a_header_is_submitted(tmp_path):
     async def scenario():
-        client = FakeClient([OCCUPIED_PROMPT])
+        class Timer:
+            now = 0
+            def clock(self): return self.now
+            async def sleep(self, seconds): self.now += seconds
+        timer = Timer()
+        client = FakeClient([OCCUPIED_PROMPT, OCCUPIED_PROMPT, OCCUPIED_PROMPT,
+                             OCCUPIED_PROMPT, EMPTY_PROMPT, EMPTY_PROMPT])
         state = TalkbackState(tmp_path / 'state.db'); state.init()
         result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
-                                       stale_input_seconds=600).deliver(
+                                       sleep=timer.sleep, clock=timer.clock,
+                                       stale_input_seconds=600, stale_poll_seconds=300).deliver(
             parse_message(MESSAGE_TEXT, ROLES, ALIASES))
-        assert not result.delivered and result.reason == 'target input occupied'
-        assert not any(method == 'pane.send_input' for method, _ in client.requests)
+        assert result.delivered and timer.now >= 600
+        sends = [p for method, p in client.requests if method == 'pane.send_input']
+        assert sends[0] == {'pane_id': 'p-back', 'text': '', 'keys': ['enter']}
     asyncio.run(scenario())
 
 

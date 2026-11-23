@@ -5,8 +5,7 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
-from .input_parser import (composer_block, inspect_input, is_folded_paste_block,
-                           is_talkback_draft)
+from .input_parser import composer_block, inspect_input, is_folded_paste_block
 from .notifier import NullNotifier, notify_alert
 from .state import TalkbackState
 from .types import MessageState, RoutedMessage
@@ -207,11 +206,10 @@ class DeliveryService:
     async def _recover_stale_input(self, pane_id, initial, message, attempt):
         # Only the composer counts: status lines, token counters and spinners
         # change constantly while an agent works and must not reset the timer.
-        # A draft is submitted only when it is visibly a Talkback message
-        # (`[source→target]`, `[source->target]` or the folded `[[source→…`).
+        # An occupied composer that stays unchanged for the whole window is
+        # stuck, so submit it even when the CLI folded its content.
         def drainable(screen):
-            return (inspect_input(screen, '').kind == 'occupied'
-                    and is_talkback_draft(composer_block(screen)))
+            return inspect_input(screen, '').kind == 'occupied'
 
         if not drainable(initial):
             return 'unavailable'
