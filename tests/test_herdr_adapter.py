@@ -30,6 +30,9 @@ class FakeRoleRegistry:
     async def refresh(self):
         self.refreshes += 1
 
+    def panes(self):
+        return tuple(self.snapshot().values())
+
     def snapshot(self):
         return {
             "dev-back": AgentInfo(
@@ -152,6 +155,16 @@ def test_herdr_adapter_acceptance_failure_is_unknown_without_touching_pane():
     assert delivery.messages == []
 
 
+def test_herdr_adapter_lists_pane_id_endpoints():
+    adapter = HerdrAdapter("linux-main", FakeRoleRegistry(), FakeDelivery(None))
+
+    endpoints = asyncio.run(adapter.list_endpoints())
+
+    addresses = {endpoint.address.qualified for endpoint in endpoints}
+    assert "linux-main/dev-back" in addresses
+    assert "linux-main/p-back" in addresses
+
+
 def test_herdr_adapter_maps_ambiguous_delivery_to_unknown():
     delivery = FakeDelivery(SimpleNamespace(delivered=False, reason="ambiguous after submit", attempts=1))
 
@@ -252,4 +265,6 @@ def test_herdr_adapter_refreshes_local_message_endpoints():
     assert [(endpoint.address.qualified, endpoint.status, endpoint.capabilities) for endpoint in endpoints] == [
         ("linux-main/dev-back", "working", ("message",)),
         ("linux-main/lead", "idle", ("message",)),
+        ("linux-main/p-back", "working", ("message",)),
+        ("linux-main/p-lead", "idle", ("message",)),
     ]

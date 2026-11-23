@@ -4,7 +4,7 @@ import re
 import uuid
 from typing import Mapping, Optional, Sequence
 
-from .addressing import EndpointAddress, parse_endpoint_address, validate_node_id
+from .addressing import EndpointAddress, is_pane_id, parse_endpoint_address, validate_node_id
 from .types import RoutedMessage
 from .rules import matches_scope
 
@@ -74,6 +74,10 @@ def parse_message(
     if isinstance(target_address, EndpointAddress):
         resolved_target = target
         target_endpoint = target_address.qualified
+    elif is_pane_id(target):
+        # A pane id is the only stable target; it bypasses role-name rules.
+        resolved_target = target
+        target_endpoint = EndpointAddress(local_node_id, target).qualified
     elif target in aliases:
         resolved_target = aliases[target]
         if allowed and resolved_target not in allowed:

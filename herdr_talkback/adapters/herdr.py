@@ -26,7 +26,7 @@ class HerdrAdapter:
 
     async def list_endpoints(self) -> Sequence[EndpointDescriptor]:
         await self.registry.refresh()
-        return tuple(
+        named = (
             EndpointDescriptor(
                 address=EndpointAddress(self.node_id, role),
                 adapter=self.name,
@@ -36,6 +36,20 @@ class HerdrAdapter:
             )
             for role, agent in sorted(self.registry.snapshot().items())
         )
+        # Pane ids are the only stable identity: names are mutable and shared.
+        lister = getattr(self.registry, 'panes', None)
+        pane_infos = lister() if lister is not None else ()
+        by_pane = (
+            EndpointDescriptor(
+                address=EndpointAddress(self.node_id, agent.pane_id),
+                adapter=self.name,
+                label=agent.name or agent.pane_id,
+                status=agent.agent_status,
+                capabilities=("message",),
+            )
+            for agent in sorted(pane_infos, key=lambda info: info.pane_id)
+        )
+        return tuple(named) + tuple(by_pane)
 
     async def deliver(
         self,

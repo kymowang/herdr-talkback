@@ -18,10 +18,11 @@ class RoleRegistry:
         self._by_role: dict[str, AgentInfo] = {}
         self._by_pane: dict[str, str] = {}
         self._by_pane_info: dict[str, AgentInfo] = {}
+        self._ambiguous: dict[str, tuple[str, ...]] = {}
 
     async def refresh(self) -> None:
         result = await self.client.request("pane.list", {})
-        by_role: dict[str, AgentInfo] = {}
+        candidates: dict[str, list[AgentInfo]] = {}
         by_pane: dict[str, str] = {}
         by_pane_info: dict[str, AgentInfo] = {}
 
@@ -40,22 +41,39 @@ class RoleRegistry:
             # Pane titles (including our own service pane) are not necessarily
             # valid message addresses. Keep them queryable by pane ID only.
             if isinstance(name, str) and SEGMENT_RE.fullmatch(name):
-                by_role[name] = agent_info
+                candidates.setdefault(name, []).append(agent_info)
                 by_pane[agent_info.pane_id] = name
             by_pane_info[agent_info.pane_id] = agent_info
 
-        self._by_role = by_role
+        # A name shared by several panes cannot address any of them: routing
+        # must never silently pick the last registered pane.
+        self._by_role = {name: infos[0] for name, infos in candidates.items() if len(infos) == 1}
+        self._ambiguous = {
+            name: tuple(info.pane_id for info in infos)
+            for name, infos in candidates.items() if len(infos) > 1
+        }
         self._by_pane = by_pane
         self._by_pane_info = by_pane_info
+
+    def panes(self) -> tuple[AgentInfo, ...]:
+        return tuple(self._by_pane_info.values())
 
     def resolve_role(self, role: str) -> str:
         return self.aliases.get(role, role)
 
     def resolve_pane(self, role: str) -> str:
+        info = self._by_pane_info.get(role)
+        if info is not None:
+            return info.pane_id
         return self.get_agent(role).pane_id
 
     def get_agent(self, role: str) -> AgentInfo:
         resolved_role = self.resolve_role(role)
+        conflicts = self._ambiguous.get(resolved_role)
+        if conflicts:
+            raise RoleResolutionError(
+                "pane name is ambiguous: {0} ({1}); use a pane ID".format(
+                    resolved_role, ", ".join(conflicts)))
         agent = self._by_role.get(resolved_role)
         if agent is None:
             raise RoleResolutionError(f"role has no active pane: {role}")

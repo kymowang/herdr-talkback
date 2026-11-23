@@ -51,6 +51,28 @@ async def _missing_role_raises():
         registry.resolve_pane("runner")
 
 
+def test_pane_ids_resolve_and_duplicate_names_are_ambiguous():
+    class Client(FakeClient):
+        async def request(self, method, params):
+            result = await super().request(method, params)
+            result['panes'] += [
+                {'label': 'cmd', 'pane_id': 'w2:p1A', 'workspace_id': 'w2', 'tab_id': 't1'},
+                {'label': 'cmd', 'pane_id': 'w2:p1G', 'workspace_id': 'w2', 'tab_id': 't2'},
+            ]
+            return result
+
+    async def scenario():
+        registry = RoleRegistry(Client(), roles=(), aliases={})
+        await registry.refresh()
+        assert registry.resolve_pane('w2:p1A') == 'w2:p1A'
+        assert registry.resolve_pane('w2:p1G') == 'w2:p1G'
+        with pytest.raises(RoleResolutionError, match=r'ambiguous.*w2:p1A, w2:p1G'):
+            registry.resolve_pane('cmd')
+        assert 'cmd' not in registry.snapshot()
+
+    asyncio.run(scenario())
+
+
 def test_display_titles_do_not_become_message_roles():
     class Client(FakeClient):
         async def request(self, method, params):

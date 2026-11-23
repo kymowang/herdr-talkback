@@ -6,10 +6,22 @@ from typing import Union
 
 
 SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Herdr pane ids look like "w2:p1A"; they are the only stable pane identity.
+PANE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*:[A-Za-z0-9][A-Za-z0-9._-]*$")
+ENDPOINT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
 
 def _validate_segment(value: str, name: str) -> None:
     if not isinstance(value, str) or not SEGMENT_RE.fullmatch(value):
+        raise ValueError(f"invalid {name}: {value!r}")
+
+
+def is_pane_id(value: str) -> bool:
+    return isinstance(value, str) and PANE_ID_RE.fullmatch(value) is not None
+
+
+def _validate_endpoint(value: str, name: str) -> None:
+    if not isinstance(value, str) or not ENDPOINT_RE.fullmatch(value):
         raise ValueError(f"invalid {name}: {value!r}")
 
 
@@ -25,7 +37,7 @@ class EndpointAddress:
 
     def __post_init__(self) -> None:
         validate_node_id(self.node_id)
-        _validate_segment(self.endpoint_id, "endpoint ID")
+        _validate_endpoint(self.endpoint_id, "endpoint ID")
 
     @property
     def qualified(self) -> str:
@@ -37,7 +49,7 @@ class UnqualifiedEndpoint:
     endpoint_id: str
 
     def __post_init__(self) -> None:
-        _validate_segment(self.endpoint_id, "endpoint ID")
+        _validate_endpoint(self.endpoint_id, "endpoint ID")
 
 
 def parse_endpoint_address(value: str) -> Union[EndpointAddress, UnqualifiedEndpoint]:
