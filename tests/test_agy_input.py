@@ -169,3 +169,36 @@ def test_agy_real_draft_still_occupied_next_to_placeholder_screen():
 
     assert state.kind == "occupied"
     assert state.text_after_prompt == "real text typed by the user"
+
+
+def scrolled_screen():
+    return "\n".join([
+        RULE,
+        "COMMENT ON COLUMN package_builder.vuln_package_build_history.remark IS '可选备注（如 custom\u2191",
+        "  定制包的客户或工单说明）';",
+        "[openclaw/agy->pc-76/kb] 补充两个关键问题请 kb 确认",
+        "  1. builder 原有 package_builder 建表语句在哪？",
+        RULE,
+        "esc to cancel" + " " * 30 + "auto · Gemini 4 Neon · high",
+    ])
+
+
+def test_agy_scrolled_draft_is_occupied_not_empty():
+    # The `>` line scrolled out; the up arrow on the first visible line is the
+    # only evidence that this rule pair holds the live draft.
+    state = inspect_input(scrolled_screen(), "")
+
+    assert state.kind == "occupied"
+    assert "补充两个关键问题" in state.text_after_prompt
+
+
+def test_agy_scrolled_draft_is_a_drainable_talkback_draft():
+    from herdr_talkback.input_parser import is_talkback_draft
+
+    assert is_talkback_draft(composer_block(scrolled_screen()))
+
+
+def test_agy_rule_pair_without_prompt_or_scroll_marker_is_not_a_composer():
+    view = "\n".join([RULE, "plain transcript text", RULE, "", "? for shortcuts"])
+
+    assert inspect_input(view, "").kind != "occupied"

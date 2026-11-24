@@ -30,6 +30,9 @@ PROMPT_MARKERS = ("❯", "›")
 AGY_RULE_RE = re.compile(r"^\s*\u2500{20,}\s*$")
 AGY_PROMPT_RE = re.compile(r"^\s*>(?: (.*))?$")
 AGY_FOOTER_HINTS = ("? for shortcuts", "esc to cancel")
+# A draft longer than the composer viewport scrolls: the `>` line goes out of
+# sight and the CLI marks the hidden part with an up arrow on the first line.
+AGY_SCROLL_MARKER_RE = re.compile(r"\u2191\s*$")
 # agy paints its prompt hint inside the composer instead of leaving it blank.
 # Those hints are not drafts: treating them as input blocks every delivery.
 AGY_PLACEHOLDERS = (
@@ -177,12 +180,17 @@ def _agy_composer_indexes(plain_lines):
         if len(plain_lines[start].strip()) != len(plain_lines[end].strip()):
             continue
         interior = [index for index in range(start + 1, end) if plain_lines[index].strip()]
-        if not interior or not AGY_PROMPT_RE.match(plain_lines[interior[0]]):
+        if not interior:
             continue
-        # Draft continuations are indented; anything else (diff markers, action
-        # lines, transcript text) means this rule pair is not the composer.
-        if any(not AGY_PROMPT_RE.match(plain_lines[index])
-               and not plain_lines[index][:1].isspace() for index in interior[1:]):
+        if AGY_PROMPT_RE.match(plain_lines[interior[0]]):
+            # Draft continuations are indented; anything else (diff markers,
+            # action lines, transcript text) means this is not the composer.
+            if any(not AGY_PROMPT_RE.match(plain_lines[index])
+                   and not plain_lines[index][:1].isspace() for index in interior[1:]):
+                continue
+        elif not AGY_SCROLL_MARKER_RE.search(plain_lines[interior[0]]):
+            # A scrolled draft hides its `>` line; the up arrow is the only
+            # evidence that this rule pair is the live composer.
             continue
         tail = [line for line in plain_lines[end + 1:] if line.strip()]
         if any(AGY_PROMPT_RE.match(line) for line in tail):
