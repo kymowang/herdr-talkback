@@ -487,3 +487,58 @@ def test_styled_indented_chevron_chrome_is_still_not_a_prompt():
     ])
 
     assert inspect_input(screen, "").text_after_prompt == "[lead\u2192dev] ping"
+
+
+def test_scrolled_draft_with_dim_up_arrow_is_occupied_not_empty():
+    # Real Codex scrolled composer: normal-brightness draft text with a dim `↑`
+    # scroll indicator at the right edge must never be mistaken for an empty placeholder.
+    screen = (
+        "\x1b[0m\x1b[1m\x1b[48;2;41;41;41m›\x1b[0m"
+        "\x1b[48;2;41;41;41m   ✓ \"先逐方法对照\" —— 与双方 ACK 的要求一致      "
+        "\x1b[0m\x1b[2m\x1b[48;2;41;41;41m↑\x1b[0m\n"
+        "\x1b[0m\x1b[48;2;41;41;41m  [ast-dev5->ast-dev2] 后续未提交正文\x1b[0m"
+    )
+
+    state = inspect_input(screen, expected_message="[lead→ast-dev2] new message")
+
+    assert state.kind == "occupied"
+
+
+def test_scrolled_draft_with_blank_first_line_and_dim_up_arrow_is_occupied():
+    screen = (
+        "\x1b[0m\x1b[1m\x1b[48;2;41;41;41m›\x1b[0m"
+        "\x1b[48;2;41;41;41m          \x1b[0m\x1b[2m\x1b[48;2;41;41;41m↑\x1b[0m\n"
+        "\x1b[0m\x1b[48;2;41;41;41m  第二行仍在输入框里\x1b[0m"
+    )
+
+    state = inspect_input(screen, expected_message="[lead→ast-dev2] new message")
+
+    assert state.kind == "occupied"
+
+
+def test_partial_dim_autocomplete_suffix_after_real_text_is_occupied():
+    screen = "❯ \x1b[38;2;255;255;255mgit st\x1b[2matus\x1b[0m"
+
+    state = inspect_input(screen, expected_message="[lead→ast-dev2] ping")
+
+    assert state.kind == "occupied"
+
+
+def test_scrolled_just_sent_message_tail_is_residue_only_after_sending():
+    expected = (
+        "[monitor→ast-dev2] 很长的第一段已经滚出视口\n"
+        "✓ \"先逐方法对照\" —— 与双方 ACK 的要求一致\n"
+        "收到本消息后，请执行 herdr-talkback message ack msg_123 置消息状态为delivered"
+    )
+    screen = (
+        "\x1b[0m\x1b[1m\x1b[48;2;41;41;41m›\x1b[0m"
+        "\x1b[48;2;41;41;41m  ✓ \"先逐方法对照\" —— 与双方 ACK 的要求一致   "
+        "\x1b[0m\x1b[2m\x1b[48;2;41;41;41m↑\x1b[0m\n"
+        "\x1b[0m\x1b[48;2;41;41;41m  收到本消息后，请执行 herdr-talkback message ack msg_123 置消息状态为delivered\x1b[0m\n"
+        "  GPT-6.1 Terra low · D:\\arc · Main [default]"
+    )
+
+    assert inspect_input(screen, expected_message=expected).kind == "occupied"
+    after = inspect_input(screen, expected_message=expected, allow_transformed_residue=True)
+    assert after.kind == "residue"
+    assert after.contains_expected_message is True

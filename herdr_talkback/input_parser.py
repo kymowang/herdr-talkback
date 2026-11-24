@@ -158,6 +158,12 @@ def inspect_input(
             text_after_prompt=visible,
             contains_expected_message=True,
         )
+    if allow_transformed_residue and _is_expected_scrolled_residue(ansi_text, expected_message):
+        return InputState(
+            kind="residue",
+            text_after_prompt=visible,
+            contains_expected_message=True,
+        )
     return InputState(kind="occupied", text_after_prompt=visible)
 
 
@@ -220,6 +226,11 @@ def _agy_fullscreen_composer_indexes(plain_lines, rules):
             continue
         if not re.match(r"^[\u203a>\u276f]", line):
             continue
+        if any(
+            SEPARATOR_RE.match(trailing.strip()) or any(hint in trailing for hint in CHROME_HINTS)
+            for trailing in plain_lines[index + 1:]
+        ):
+            return None
         interior = [position for position in range(index, len(plain_lines))
                     if plain_lines[position].strip()]
         if len(interior) >= 2:
@@ -332,6 +343,7 @@ CHROME_HINTS = (
     "ctx ", "bypass permissions", "shift+tab", "agents", "esc", "ctrl+p",
     "commands", "Tip ", "enter/esc", "shortcuts", "f2", "warnings",
     "Back to bottom", "Goal ", "~/arc", "interrupt", "tokens",
+    "Main [", "tab to queue message",
 )
 SEPARATOR_RE = re.compile(r"^[\u2500\u2501\u2550_\-\s]{10,}$")
 
@@ -597,13 +609,11 @@ def _first_line(text: str) -> str:
 def _looks_like_placeholder(ansi_segment: str, visible: str) -> bool:
     if visible in PLACEHOLDER_TEXT:
         return True
-    if _has_dim_sgr(ansi_segment):
-        return True
-    rgb = RGB_RE.search(ansi_segment)
-    if not rgb:
+    # A scrolled multi-line composer draws a dim `↑` at the right edge of its
+    # first visible line; never mistake a scrolled draft for an empty placeholder.
+    if SCROLLED_COMPOSER_RE.search(visible) is not None:
         return False
-    red, green, blue = (int(part) for part in rgb.groups())
-    return max(red, green, blue) <= 170
+    return _all_visible_styled_as_placeholder(ansi_segment)
 
 
 def _is_expected_multiline_paste_block(visible: str, expected_message: str) -> bool:
@@ -701,11 +711,73 @@ def _is_expected_image_placeholder_residue(visible: str, expected_message: str) 
     return bool(len(rendered_tail) >= 24 and rendered_tail in expected)
 
 
-def _has_dim_sgr(text: str) -> bool:
-    for match in SGR_RE.finditer(text):
+def _is_expected_scrolled_residue(ansi_text: str, expected_message: str) -> bool:
+    """Recognize a long just-sent message whose top lines scrolled above the composer."""
+    block = composer_block(ansi_text)
+    if not block or SCROLLED_COMPOSER_RE.search(block) is None:
+        return False
+    cleaned = SCROLLED_COMPOSER_RE.sub("", block).replace("\u200b", "")
+    block_compact = _compact_visible(cleaned)
+    expected_compact = _compact_visible(expected_message.replace("\u200b", ""))
+    return bool(
+        len(block_compact) >= 40
+        and expected_compact
+        and expected_compact.endswith(block_compact)
+    )
+
+
+def _all_visible_styled_as_placeholder(ansi_segment: str) -> bool:
+    """Return True only when every non-whitespace character is dim or muted-gray."""
+    dim = False
+    fg_gray = False
+    has_visible = False
+    pos = 0
+    for match in SGR_RE.finditer(ansi_segment):
+        chunk = ansi_segment[pos:match.start()]
+        if any(not ch.isspace() for ch in chunk):
+            has_visible = True
+            if not (dim or fg_gray):
+                return False
         params = match.group(1) or "0"
-        parts = params.split(";")
-        for index, part in enumerate(parts):
-            if part == "2" and (index == 0 or parts[index - 1] not in ("38", "48")):
-                return True
-    return False
+        parts = [int(part or "0") for part in params.split(";")]
+        index = 0
+        while index < len(parts):
+            code = parts[index]
+            if code == 0:
+                dim = False
+                fg_gray = False
+            elif code == 2:
+                dim = True
+            elif code == 22:
+                dim = False
+            elif code == 39:
+                fg_gray = False
+            elif code == 38 and index + 1 < len(parts):
+                mode = parts[index + 1]
+                if mode == 2 and index + 4 < len(parts):
+                    red, green, blue = parts[index + 2], parts[index + 3], parts[index + 4]
+                    fg_gray = max(red, green, blue) <= 170
+                    index += 5
+                    continue
+                if mode == 5 and index + 2 < len(parts):
+                    fg_gray = False
+                    index += 3
+                    continue
+            elif code == 48 and index + 1 < len(parts):
+                mode = parts[index + 1]
+                if mode == 2 and index + 4 < len(parts):
+                    index += 5
+                    continue
+                if mode == 5 and index + 2 < len(parts):
+                    index += 3
+                    continue
+            elif (30 <= code <= 37) or (90 <= code <= 97):
+                fg_gray = False
+            index += 1
+        pos = match.end()
+    tail = ansi_segment[pos:]
+    if any(not ch.isspace() for ch in tail):
+        has_visible = True
+        if not (dim or fg_gray):
+            return False
+    return has_visible

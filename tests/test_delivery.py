@@ -1380,3 +1380,55 @@ def test_delivery_keeps_one_write_when_the_key_delay_is_disabled(tmp_path):
         assert len(sends) == 1
         assert sends[0]["keys"] == ["enter"]
     asyncio.run(scenario())
+
+
+def test_stale_scrolled_draft_with_dim_up_arrow_triggers_ten_minute_fallback(tmp_path):
+    async def scenario():
+        class Timer:
+            now = 0
+            def clock(self): return self.now
+            async def sleep(self, seconds): self.now += seconds
+
+        timer = Timer()
+        scrolled_with_dim_arrow = (
+            "\x1b[0m\x1b[1m\x1b[48;2;41;41;41m›\x1b[0m"
+            "\x1b[48;2;41;41;41m   ✓ \"先逐方法对照\" —— 与双方 ACK 的要求一致      "
+            "\x1b[0m\x1b[2m\x1b[48;2;41;41;41m↑\x1b[0m\n"
+            "\x1b[0m\x1b[48;2;41;41;41m  未提交的长消息正文\x1b[0m\n"
+            "  GPT-6.1 Terra low · D:\\arc · Main [default]"
+        )
+        client = FakeClient([
+            scrolled_with_dim_arrow,
+            scrolled_with_dim_arrow,
+            scrolled_with_dim_arrow,
+            scrolled_with_dim_arrow,
+            EMPTY_PROMPT,
+            EMPTY_PROMPT,
+        ])
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+        message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
+        result = await DeliveryService(
+            client,
+            FakeRegistry(),
+            state,
+            max_attempts=1,
+            sleep=timer.sleep,
+            clock=timer.clock,
+            stale_input_seconds=600,
+            stale_poll_seconds=300,
+        ).deliver(message)
+
+        assert result.delivered is True
+        assert timer.now >= 600
+        sends = [params for method, params in client.requests if method == "pane.send_input"]
+        assert sends == [
+            {"pane_id": "p-back", "text": "", "keys": ["enter"]},
+            {
+                "pane_id": "p-back",
+                "text": append_ack_instruction(MESSAGE_TEXT, message.message_id),
+                "keys": ["enter"],
+            },
+        ]
+
+    asyncio.run(scenario())
