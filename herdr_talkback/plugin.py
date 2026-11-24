@@ -56,7 +56,7 @@ def legacy_running():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='herdr-talkback-plugin')
-    parser.add_argument('command', choices=['init', 'start', 'serve', 'check', 'queue', 'update-worker'])
+    parser.add_argument('command', choices=['init', 'start', 'restart', 'serve', 'check', 'queue', 'update-worker'])
     args = parser.parse_args(argv)
     path = initialize()
     if args.command == 'init':
@@ -67,6 +67,9 @@ def main(argv=None):
         from .remote_update import run_next_update
         herdr = os.environ.get('HERDR_BIN_PATH', 'herdr')
         return run_next_update(cfg, herdr)
+    if args.command == 'restart':
+        from .cli import main as cli_main
+        return cli_main(['--config', str(path), 'restart'])
     if args.command in {'start', 'serve'}:
         if daemon_running(cfg.daemon_socket_path):
             print('Talkback service is already running')

@@ -28,7 +28,7 @@ herdr plugin log list --plugin herdr-talkback
 herdr plugin action invoke herdr-talkback.start
 ```
 
-Use `python3` where appropriate. Check the asynchronous check action's logs before starting; run from the intended Herdr session. Remote communication requires the reciprocal peer setup below. A local checkout can instead use `pip install -e '.[network]'` and `herdr plugin link <checkout>`; do not install over an existing linked plugin. To update, update both the Python package and Herdr-managed plugin and restart the service. For an offline-friendly portable bundle, follow its included `INSTALL.md`. Preserve existing configuration, state, and credentials.
+Use `python3` where appropriate. Check the asynchronous check action's logs before starting; run from the intended Herdr session. Remote communication requires the reciprocal peer setup below. A local checkout can instead use `pip install -e '.[network]'` and `herdr plugin link <checkout>`; do not install over an existing linked plugin. To update, update both the Python package and Herdr-managed plugin, then restart the service with `herdr-talkback --config $cfg restart` (or `herdr plugin action invoke herdr-talkback.restart`); it closes and reopens the service pane and refuses while messages are still in delivery unless `--force` is given. For an offline-friendly portable bundle, follow its included `INSTALL.md`. Preserve existing configuration, state, and credentials.
 
 ## Configure peers before cross-host messaging
 

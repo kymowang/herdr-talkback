@@ -78,6 +78,16 @@ herdr plugin action invoke herdr-talkback.start
 
 `herdr-talkback --config <配置路径> peers check <节点>` 也会显示支持该功能的远端服务版本。指纹在进程启动时由包内 Python 和默认 TOML 内容计算，可区分同一发行版本的不同源码；它不是 Git 提交号，也不能证明进程启动后文件未被修改。
 
+### 重启服务
+
+```bash
+herdr-talkback --config <配置路径> restart
+# 或从 Herdr 侧：
+herdr plugin action invoke herdr-talkback.restart
+```
+
+该命令关闭当前运行的服务 pane，再用已安装的包重新打开，并输出新旧 build 指纹；服务未运行时则直接启动。仍有消息在投递（`queued`、`retrying`、`checking_input` 等）时默认拒绝，加 `--force` 强制重启——这些消息可能变成 `delivery_unknown`，需要之后用 `retry` 补投。
+
 ```bash
 herdr plugin config-dir herdr-talkback
 ```

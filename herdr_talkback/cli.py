@@ -225,6 +225,20 @@ def build_parser() -> argparse.ArgumentParser:
     serve = sub.add_parser("serve", help="Run the Talkback service")
     serve.add_argument("--dry-run", action="store_true")
 
+    restart = sub.add_parser(
+        "restart",
+        help="Restart the Talkback service pane",
+        description=(
+            "Close the running Talkback service pane and open a fresh one with the "
+            "currently installed package. Fails while messages are still in delivery "
+            "unless --force is given."
+        ),
+    )
+    restart.add_argument(
+        "--force", action="store_true",
+        help="Restart even when messages are still queued or being delivered",
+    )
+
     tail = sub.add_parser("tail", help="Show recent daemon events")
     tail.add_argument("--limit", type=int, default=50)
 
@@ -683,6 +697,9 @@ async def _main_async(args) -> int:
 
         return await run_service(cfg, dry_run=args.dry_run)
 
+    if args.command == "restart":
+        return await _restart_service(cfg, force=args.force)
+
     client = HerdrClient(cfg.socket_path)
     if args.command == "pane":
         result = await client.request("pane.list", {})
@@ -1120,6 +1137,79 @@ def _format_input_diagnostic(diagnostic: dict) -> str:
             diagnostic["raw_ansi"],
         ]
     )
+
+
+async def _wait_for(predicate, seconds: float, step: float = 0.25) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        await asyncio.sleep(step)
+    return bool(predicate())
+
+
+async def _restart_service(cfg, force: bool, *, run=None, running=None) -> int:
+    from .transport import local_endpoint_running
+
+    run = run or subprocess.run
+    running = running or local_endpoint_running
+    herdr = os.environ.get("HERDR_BIN_PATH", "herdr")
+    socket_path = cfg.daemon_socket_path
+    previous = {}
+    if running(socket_path):
+        try:
+            previous = await submit_daemon_request(socket_path, {"type": "runtime_info"})
+        except OSError as exc:
+            print(json.dumps({"ok": False, "error": f"could not reach the service: {exc}"}, ensure_ascii=False))
+            return 1
+        pane_id = previous.get("pane_id") if isinstance(previous, dict) else ""
+        if not pane_id:
+            print(json.dumps({
+                "ok": False,
+                "error": "the running service does not report its pane id; close its pane manually and start it again",
+            }, ensure_ascii=False))
+            return 1
+        state = TalkbackState(cfg.state_path, local_node_id=getattr(cfg, "core_node_id", "linux-main"))
+        state.init()
+        active = state.list_active_messages()
+        if active and not force:
+            print(json.dumps({
+                "ok": False,
+                "error": f"{len(active)} message(s) still in delivery; rerun with --force to restart anyway",
+                "message_ids": [row["message_id"] for row in active[:10]],
+            }, ensure_ascii=False))
+            return 1
+        try:
+            run([herdr, "pane", "close", pane_id], check=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            print(json.dumps({"ok": False, "error": f"could not close the service pane {pane_id}: {exc}"}, ensure_ascii=False))
+            return 1
+        if not await _wait_for(lambda: not running(socket_path), 20):
+            print(json.dumps({
+                "ok": False,
+                "error": f"service pane {pane_id} did not stop; close it manually and start it again",
+            }, ensure_ascii=False))
+            return 1
+
+    try:
+        run([herdr, "plugin", "pane", "open", "--plugin", "herdr-talkback",
+             "--entrypoint", "service", "--placement", "tab", "--no-focus"],
+            check=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(json.dumps({"ok": False, "error": f"could not open the service pane: {exc}"}, ensure_ascii=False))
+        return 1
+    if not await _wait_for(lambda: running(socket_path), 30):
+        print(json.dumps({"ok": False, "error": "the service pane did not start; check 'herdr plugin log list --plugin herdr-talkback'"}, ensure_ascii=False))
+        return 1
+    current = await submit_daemon_request(socket_path, {"type": "runtime_info"})
+    print(json.dumps({
+        "ok": True,
+        "restarted": bool(previous),
+        "pane_id": current.get("pane_id", ""),
+        "build": current.get("build", ""),
+        "previous_build": previous.get("build", "") if isinstance(previous, dict) else "",
+    }, ensure_ascii=False))
+    return 0
 
 
 def _resolve_read_config_path(config_path: Optional[Path]) -> Optional[Path]:

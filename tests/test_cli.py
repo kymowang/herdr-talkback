@@ -1361,3 +1361,133 @@ def test_peer_update_status_returns_nonzero_for_failed_job(monkeypatch, capsys):
     args=build_parser().parse_args(['peer','update-status','remote','update_123'])
     assert asyncio.run(cli._main_async(args)) == 1
     assert json.loads(capsys.readouterr().out)['state'] == 'failed'
+
+
+def test_restart_closes_and_reopens_the_service_pane(tmp_path, capsys, monkeypatch):
+    async def scenario():
+        calls, up = [], {"up": True}
+
+        def run(args, **kwargs):
+            calls.append(args)
+            if args[1:3] == ["pane", "close"]:
+                up["up"] = False
+            if args[1:3] == ["plugin", "pane"]:
+                up["up"] = True
+
+        async def runtime_info(socket_path, payload):
+            return {"ok": True, "pane_id": "w1:p9", "build": "new"}
+
+        monkeypatch.setattr(cli, "submit_daemon_request", runtime_info)
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+        cfg = SimpleNamespace(daemon_socket_path=tmp_path / "tb.sock",
+                              state_path=state.path, core_node_id="linux-main")
+
+        result = await cli._restart_service(cfg, False, run=run, running=lambda path: up["up"])
+
+        assert result == 0
+        assert calls[0][1:3] == ["pane", "close"]
+        assert calls[1][1:5] == ["plugin", "pane", "open", "--plugin"]
+        assert json.loads(capsys.readouterr().out) == {
+            "ok": True, "restarted": True, "pane_id": "w1:p9",
+            "build": "new", "previous_build": "new",
+        }
+    asyncio.run(scenario())
+
+
+def test_restart_starts_the_service_when_it_is_not_running(tmp_path, capsys, monkeypatch):
+    async def scenario():
+        calls, up = [], {"up": False}
+
+        def run(args, **kwargs):
+            calls.append(args)
+            up["up"] = True
+
+        async def runtime_info(socket_path, payload):
+            return {"ok": True, "pane_id": "w1:p9", "build": "new"}
+
+        monkeypatch.setattr(cli, "submit_daemon_request", runtime_info)
+        cfg = SimpleNamespace(daemon_socket_path=tmp_path / "tb.sock",
+                              state_path=tmp_path / "state.db", core_node_id="linux-main")
+
+        result = await cli._restart_service(cfg, False, run=run, running=lambda path: up["up"])
+
+        assert result == 0
+        assert calls[0][1:] == ["plugin", "pane", "open", "--plugin", "herdr-talkback",
+                                "--entrypoint", "service", "--placement", "tab", "--no-focus"]
+        assert json.loads(capsys.readouterr().out)["restarted"] is False
+    asyncio.run(scenario())
+
+
+def test_restart_refuses_while_messages_are_in_delivery(tmp_path, capsys, monkeypatch):
+    async def scenario():
+        calls = []
+
+        def run(args, **kwargs):
+            calls.append(args)
+
+        async def runtime_info(socket_path, payload):
+            return {"ok": True, "pane_id": "w1:p9", "build": "old"}
+
+        monkeypatch.setattr(cli, "submit_daemon_request", runtime_info)
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+        state.create_message("msg_1", "lead", "dev-back", "p-back", "[lead→dev-back] queued")
+        cfg = SimpleNamespace(daemon_socket_path=tmp_path / "tb.sock",
+                              state_path=state.path, core_node_id="linux-main")
+
+        result = await cli._restart_service(cfg, False, run=run, running=lambda path: True)
+
+        assert result == 1
+        assert calls == []
+        output = json.loads(capsys.readouterr().out)
+        assert "still in delivery" in output["error"]
+        assert output["message_ids"] == ["msg_1"]
+    asyncio.run(scenario())
+
+
+def test_restart_force_proceeds_with_pending_messages(tmp_path, capsys, monkeypatch):
+    async def scenario():
+        calls, up = [], {"up": True}
+
+        def run(args, **kwargs):
+            calls.append(args)
+            up["up"] = args[1:3] != ["pane", "close"]
+
+        async def runtime_info(socket_path, payload):
+            return {"ok": True, "pane_id": "w1:p9", "build": "new"}
+
+        monkeypatch.setattr(cli, "submit_daemon_request", runtime_info)
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+        state.create_message("msg_1", "lead", "dev-back", "p-back", "[lead→dev-back] queued")
+        cfg = SimpleNamespace(daemon_socket_path=tmp_path / "tb.sock",
+                              state_path=state.path, core_node_id="linux-main")
+
+        result = await cli._restart_service(cfg, True, run=run, running=lambda path: up["up"])
+
+        assert result == 0
+        assert calls[0][1:3] == ["pane", "close"]
+    asyncio.run(scenario())
+
+
+def test_restart_requires_a_pane_id_from_the_running_service(tmp_path, capsys, monkeypatch):
+    async def scenario():
+        calls = []
+
+        def run(args, **kwargs):
+            calls.append(args)
+
+        async def runtime_info(socket_path, payload):
+            return {"ok": True, "build": "old"}
+
+        monkeypatch.setattr(cli, "submit_daemon_request", runtime_info)
+        cfg = SimpleNamespace(daemon_socket_path=tmp_path / "tb.sock",
+                              state_path=tmp_path / "state.db", core_node_id="linux-main")
+
+        result = await cli._restart_service(cfg, False, run=run, running=lambda path: True)
+
+        assert result == 1
+        assert calls == []
+        assert "pane id" in json.loads(capsys.readouterr().out)["error"]
+    asyncio.run(scenario())

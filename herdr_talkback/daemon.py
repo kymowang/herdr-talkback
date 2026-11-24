@@ -125,6 +125,7 @@ class DaemonMessageRouter:
     async def _handle_unlocked(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         if payload.get('type') == 'runtime_info':
             return {'ok': True, 'update_id': os.environ.get('HERDR_TALKBACK_UPDATE_ID', ''),
+                    'pane_id': os.environ.get('HERDR_PANE_ID', ''),
                     'module_path': str(Path(__file__).resolve()), 'version': __version__, 'build': __build__}
         if payload.get('type') == 'monitor_state':
             if self.monitor_controller is None:

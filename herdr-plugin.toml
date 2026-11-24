@@ -24,6 +24,12 @@ contexts = ["workspace"]
 command = ["herdr-talkback-plugin", "start"]
 
 [[actions]]
+id = "restart"
+title = "Restart Talkback service"
+contexts = ["workspace"]
+command = ["herdr-talkback-plugin", "restart"]
+
+[[actions]]
 id = "check"
 title = "Check Talkback configuration and Herdr connection"
 contexts = ["workspace"]
