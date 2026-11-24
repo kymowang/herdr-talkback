@@ -202,3 +202,42 @@ def test_agy_rule_pair_without_prompt_or_scroll_marker_is_not_a_composer():
     view = "\n".join([RULE, "plain transcript text", RULE, "", "? for shortcuts"])
 
     assert inspect_input(view, "").kind != "occupied"
+
+
+def tall_screen():
+    # The draft outgrew the composer: the top rule scrolled away too.
+    return "\n".join([
+        " " * 110 + "\u2191",
+        "  COMMENT ON TABLE package_builder.vuln_package_build_history IS '漏洞升级包制作历史';",
+        "  [openclaw/agy->pc-76/kb] 补充两个关键问题请 kb 确认",
+        RULE,
+        "esc to cancel" + " " * 30 + "auto · Gemini 4 Neon · high",
+    ])
+
+
+def test_agy_tall_draft_without_top_rule_is_occupied():
+    state = inspect_input(tall_screen(), "")
+
+    assert state.kind == "occupied"
+    assert "COMMENT ON TABLE" in state.text_after_prompt
+    assert state.text_after_prompt.startswith("\u2191")
+
+
+def test_agy_tall_draft_is_still_a_drainable_talkback_draft():
+    from herdr_talkback.input_parser import is_talkback_draft
+
+    assert is_talkback_draft(composer_block(tall_screen()))
+
+
+def test_command_code_screen_is_not_read_as_a_tall_agy_composer():
+    screen = "\n".join([
+        "❯ [lead→dev] ping",
+        RULE,
+        "  » permission bypass on [shift+tab]",
+        "  ? for shortcuts · taste on",
+    ])
+
+    state = inspect_input(screen, "")
+
+    assert state.kind == "occupied"
+    assert state.text_after_prompt == "[lead→dev] ping"

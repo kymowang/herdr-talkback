@@ -43,6 +43,7 @@ PLACEHOLDER_TEXT = (
     "Press up to edit queued messages",
     "Write tests for @filename",
     "Explain this codebase",
+    "Ask Codex to do anything",
 )
 DISMISSIBLE_OVERLAY_TEXT = "Esc to cancel"
 
@@ -198,6 +199,32 @@ def _agy_composer_indexes(plain_lines):
         if not any(hint in line for line in tail for hint in AGY_FOOTER_HINTS):
             continue
         return interior
+    return _agy_tall_composer_indexes(plain_lines, rules)
+
+
+def _agy_tall_composer_indexes(plain_lines, rules):
+    """Recover a composer taller than the viewport.
+
+    When the draft outgrows the composer area, the top rule scrolls away and
+    only the bottom rule stays on screen. The up-arrow line marks where the
+    visible part starts. Any ``❯``/``›`` on screen means this is not agy;
+    without that guard a Command Code screen would be misread as a tall agy
+    composer.
+    """
+    if any(marker in line for line in plain_lines for marker in PROMPT_MARKERS):
+        return None
+    for end in reversed(rules):
+        tail = [line for line in plain_lines[end + 1:] if line.strip()]
+        if not tail or not any(hint in line for line in tail for hint in AGY_FOOTER_HINTS):
+            continue
+        if any(AGY_PROMPT_RE.match(line) for line in tail):
+            continue
+        markers = [index for index in range(end) if AGY_SCROLL_MARKER_RE.search(plain_lines[index])]
+        if not markers:
+            continue
+        interior = [index for index in range(markers[-1], end) if plain_lines[index].strip()]
+        if interior:
+            return interior
     return None
 
 
@@ -275,7 +302,7 @@ def is_talkback_draft(text: str) -> bool:
     return len(lines) >= 2 and SCROLLED_COMPOSER_RE.search(stripped) is not None
 
 
-PROMPT_LINE_RE = re.compile(r"^\s*[\u276f\u203a]")
+PROMPT_LINE_RE = re.compile(r"^\s*[\u276f\u203a\u00bb]")
 CHROME_HINTS = (
     "ctx ", "bypass permissions", "shift+tab", "agents", "esc", "ctrl+p",
     "commands", "Tip ", "enter/esc", "shortcuts", "f2", "warnings",
@@ -514,6 +541,11 @@ def _segment_after_last_prompt(text: str) -> Optional[str]:
         if index > marker_index:
             marker_index = index
             marker_len = len(marker)
+    # Codex also renders `» at column zero. Indented `»` is chrome
+    # ("» permission bypass on [shift+tab]"), so it must not qualify.
+    for match in re.finditer(r"^\u00bb", text, re.MULTILINE):
+        if match.start() > marker_index:
+            marker_index, marker_len = match.start(), 1
 
     if marker_index < 0:
         return None

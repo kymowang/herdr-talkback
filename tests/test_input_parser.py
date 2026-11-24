@@ -405,3 +405,41 @@ def test_short_visible_head_of_expected_message_stays_occupied():
     state = inspect_input("❯ [lead2→lea", expected_message=message)
 
     assert state.kind == "occupied"
+
+
+def test_codex_chevron_composer_placeholder_is_empty():
+    screen = "\n".join([
+        "\u00bb Ask Codex to do anything",
+        "  gpt-6.2-sol ultra · ~\\code\\vmsOps · Main [default]",
+        "  \u2190 for agents · ? for shortcuts",
+    ])
+
+    state = inspect_input(screen, "")
+
+    assert state.kind == "empty"
+    assert state.text_after_prompt == "Ask Codex to do anything"
+
+
+def test_codex_chevron_composer_draft_is_occupied():
+    screen = "\n".join([
+        "\u00bb 给openclaw/talkback发一条测试消息",
+        "  gpt-6.2-sol ultra · ~\\code\\vmsOps · Main [default]",
+    ])
+
+    state = inspect_input(screen, "")
+
+    assert state.kind == "occupied"
+    assert state.text_after_prompt == "给openclaw/talkback发一条测试消息"
+
+
+def test_indented_chevron_chrome_is_not_a_prompt():
+    screen = "\n".join([
+        "\u276f [lead\u2192dev] ping",
+        "  \u00bb permission bypass on [shift+tab]",
+        "  ? for shortcuts · taste on",
+    ])
+
+    state = inspect_input(screen, "")
+
+    assert state.kind == "occupied"
+    assert state.text_after_prompt == "[lead\u2192dev] ping"
