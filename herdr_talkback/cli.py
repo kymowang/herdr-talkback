@@ -1139,6 +1139,11 @@ def _format_input_diagnostic(diagnostic: dict) -> str:
     )
 
 
+IN_FLIGHT_STATES = frozenset({
+    "queued", "offered", "accepted", "sending", "verifying", "retrying", "checking_input",
+})
+
+
 async def _wait_for(predicate, seconds: float, step: float = 0.25) -> bool:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -1171,7 +1176,9 @@ async def _restart_service(cfg, force: bool, *, run=None, running=None) -> int:
             return 1
         state = TalkbackState(cfg.state_path, local_node_id=getattr(cfg, "core_node_id", "linux-main"))
         state.init()
-        active = state.list_active_messages()
+        # delivery_unknown and waiting_endpoint are already parked; a restart is
+        # safe for them. Only a live delivery can lose its precision.
+        active = [row for row in state.list_active_messages() if row["state"] in IN_FLIGHT_STATES]
         if active and not force:
             print(json.dumps({
                 "ok": False,

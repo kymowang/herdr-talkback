@@ -1491,3 +1491,31 @@ def test_restart_requires_a_pane_id_from_the_running_service(tmp_path, capsys, m
         assert calls == []
         assert "pane id" in json.loads(capsys.readouterr().out)["error"]
     asyncio.run(scenario())
+
+
+def test_restart_ignores_parked_delivery_unknown_messages(tmp_path, capsys, monkeypatch):
+    async def scenario():
+        calls, up = [], {"up": True}
+
+        def run(args, **kwargs):
+            calls.append(args)
+            up["up"] = args[1:3] != ["pane", "close"]
+
+        async def runtime_info(socket_path, payload):
+            return {"ok": True, "pane_id": "w1:p9", "build": "new"}
+
+        monkeypatch.setattr(cli, "submit_daemon_request", runtime_info)
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+        state.create_message("msg_unknown", "lead", "dev-back", "p-back", "[lead→dev-back] x")
+        state.update_message_state("msg_unknown", CoreMessageState.DELIVERY_UNKNOWN, "message residue not cleared")
+        state.create_message("msg_waiting", "lead", "pc-76/kb", "", "[lead→pc-76/kb] y")
+        state.update_message_state("msg_waiting", CoreMessageState.WAITING_ENDPOINT, "endpoint not registered")
+        cfg = SimpleNamespace(daemon_socket_path=tmp_path / "tb.sock",
+                              state_path=state.path, core_node_id="linux-main")
+
+        result = await cli._restart_service(cfg, False, run=run, running=lambda path: up["up"])
+
+        assert result == 0
+        assert calls[0][1:3] == ["pane", "close"]
+    asyncio.run(scenario())
