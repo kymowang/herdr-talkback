@@ -314,6 +314,8 @@ async def _message_cancel_stops_a_nonterminal_message_only(monkeypatch, tmp_path
         message_id="msg_wait", source_endpoint="openclaw/lead",
         target_endpoint="linux-main/codex2", body="hello", raw_text="[lead→codex2] hello",
         state=CoreMessageState.WAITING_ENDPOINT, conversation_id="msg_wait"))
+    state.create_message("msg_unknown", "lead", "runner", "p-runner", "[lead→runner] maybe")
+    state.update_message_state("msg_unknown", CoreMessageState.DELIVERY_UNKNOWN, "residue not cleared")
     state.create_message("msg_done", "lead", "dev-back", "p-back", "[lead→dev-back] done")
     state.update_message_state("msg_done", MessageState.DELIVERED, "input cleared")
     config_file = tmp_path / "herdr-talkback.toml"
@@ -323,6 +325,10 @@ async def _message_cancel_stops_a_nonterminal_message_only(monkeypatch, tmp_path
     assert await cli._main_async(args) == 0
     assert state.get_message("msg_wait")["state"] == "failed"
     assert state.get_message("msg_wait")["reason"] == "canceled by operator"
+
+    args = build_parser().parse_args(["--config", str(config_file), "message", "cancel", "msg_unknown"])
+    assert await cli._main_async(args) == 0
+    assert state.get_message("msg_unknown")["state"] == "failed"
 
     args = build_parser().parse_args(["--config", str(config_file), "message", "cancel", "msg_done"])
     assert await cli._main_async(args) == 1

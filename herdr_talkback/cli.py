@@ -169,10 +169,35 @@ def build_parser() -> argparse.ArgumentParser:
         "--direct", action="store_true",
         help="Diagnostics only: bypass the daemon queue (no retries, no recorded state)",
     )
-    whoami = sub.add_parser('whoami', help='Register and introduce a pane to a configured peer')
-    whoami.add_argument('source')
-    whoami.add_argument('host')
-    whoami.add_argument('target')
+    whoami = sub.add_parser(
+        'whoami',
+        help='Register and introduce a local pane to a configured peer',
+        description=(
+            "Introduce one of YOUR local panes to a pane on a configured peer.\n"
+            "The remote pane name is registered locally as an alias, and the peer\n"
+            "receives a [whoami] message so it can reply to you."
+        ),
+        epilog=(
+            "Arguments:\n"
+            "  source  your own local pane label (must match exactly one pane)\n"
+            "  host    a configured PEER node id or its address, IP:port\n"
+            "  target  the pane name on the remote host\n"
+            "\n"
+            "Examples:\n"
+            "  herdr-talkback whoami talkback openclaw lead\n"
+            "  herdr-talkback whoami talkback 192.168.90.18:18765 lead\n"
+            "\n"
+            "Check peers first:  herdr-talkback peers list\n"
+            "Then send:          herdr-talkback send '[talkback→lead] hello'\n"
+            "\n"
+            "For config information to hand to another operator, use\n"
+            "'herdr-talkback pane identity <pane>' instead."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    whoami.add_argument('source', help='Your local pane label')
+    whoami.add_argument('host', help='Configured peer node id or address')
+    whoami.add_argument('target', help='Pane name on the remote host')
 
     exec_cmd = sub.add_parser("exec", help="Run a command in several panes at once")
     exec_cmd.add_argument("targets")
@@ -561,7 +586,10 @@ async def _main_async(args) -> int:
                            if urlsplit(peer.url).hostname == requested.hostname
                            and (requested.port is None or (urlsplit(peer.url).port or 443) == requested.port)]
             if len(matches) != 1:
-                raise ValueError('host must match exactly one configured peer; include its port if needed')
+                configured = ', '.join(sorted(cfg.peers)) or '(none)'
+                raise ValueError(
+                    'host must match exactly one configured peer; include its port if needed. '
+                    'configured peers: ' + configured)
             node = matches[0]
             panes = (await HerdrClient(cfg.socket_path).request('pane.list', {})).get('panes', [])
             labels = [p.get('label') for p in panes]

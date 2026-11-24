@@ -643,12 +643,8 @@ class TalkbackState:
         return [dict(row) for row in rows]
 
     def cancel_message(self, message_id: str, reason: str = "canceled by operator") -> bool:
-        """Stop dispatching a non-terminal message and mark it failed."""
-        terminal = (
-            MessageState.DELIVERED.value,
-            MessageState.FAILED.value,
-            CoreMessageState.DELIVERY_UNKNOWN.value,
-        )
+        """Mark any undelivered message failed, including unconfirmed deliveries."""
+        terminal = (MessageState.DELIVERED.value, MessageState.FAILED.value)
         placeholders = ", ".join("?" for _ in terminal)
         with self._connect() as db:
             cursor = db.execute(
