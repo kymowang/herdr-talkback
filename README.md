@@ -133,6 +133,8 @@ append = "上述内容如果是任务而非通知，完成后请通过talkback�
 
 本地 Pane 发送后等待 5 秒，再检查当前可见输入框；如果识别到待发送消息仍在输入框，补发一次 Enter 并确认结果。发送后的 Codex 输入框出现 `[Pasted Content ... chars]` 折叠内容时也会补发 Enter；发送前已存在的折叠草稿仍视为占用。跨主机消息由目标机器的 Talkback 对本地 Pane 执行此检查。
 
+投递到目标本地 Pane 时，Talkback 会在消息末尾动态追加一条送达确认提示：`收到本消息后，请执行 herdr-talkback message ack <message_id> 置消息状态为delivered`（不修改数据库中的原始 `raw_text`/`body`，重试时自动携带新消息 ID）。接收方执行 `herdr-talkback message ack <message_id>` 会自动发现当前 Herdr 插件配置并将该消息幂等地置为 `delivered`；若消息正处于校验中或此前落入 `delivery_unknown`/异常状态，也会立即确认送达（跨主机消息会同步更新对端回执）。
+
 ### 无人值守时的输入框占用
 
 当有消息等待本机 Pane 投递，且输入框被占用时，Talkback 每 30 秒检查**输入框内容**（不含下方的状态栏、分隔线和快捷键提示）。输入框内容连续 10 分钟不变后再次确认，补按一次 Enter。只有确认输入框清空后才继续投递待发消息。输入框内容任何变化均重新计时；服务重启后也重新计时。
@@ -152,6 +154,9 @@ herdr-talkback --config "$TALKBACK_CONFIG" pane list
 herdr-talkback --config "$TALKBACK_CONFIG" send '[lead->dev-be] 请处理任务' --dry-run
 herdr-talkback --config "$TALKBACK_CONFIG" send '[lead->dev-be] 请处理任务'
 herdr-talkback --config "$TALKBACK_CONFIG" queue
+herdr-talkback --config "$TALKBACK_CONFIG" queue --format table
+herdr-talkback --config "$TALKBACK_CONFIG" queue --table
+herdr-talkback message ack msg_xxx
 herdr-talkback --config "$TALKBACK_CONFIG" status lead2 --json
 herdr-talkback --config "$TALKBACK_CONFIG" input lead2 --json
 herdr-talkback --config "$TALKBACK_CONFIG" exec lead2 continue
@@ -161,7 +166,7 @@ herdr-talkback --config "$TALKBACK_CONFIG" alerts clear
 herdr-talkback --config "$TALKBACK_CONFIG" tail
 ```
 
-`pane list` 以表格显示全部窗格，包含未命名窗格与插件服务窗格。`NAME` 为窗格名称，`TITLE` 为终端标题，`TAB NAME` 为 Tab 名称（例如 `jupyter`）；另外显示窗格 ID、Agent、状态、Tab ID 和目录。中文名称按显示宽度对齐。`panes` 仍用于查看可路由的角色。
+`pane list` 以表格显示全部窗格，包含未命名窗格与插件服务窗格。`NAME` 为窗格名称，`TITLE` 为终端标题，`TAB NAME` 为 Tab 名称（例如 `jupyter`）；另外显示窗格 ID、Agent、状态、Tab ID 和目录。中文名称按显示宽度对齐。`panes` 仍用于查看可路由的角色。`queue` 默认按行输出未完成消息的 JSON；传入 `--format table`（或简写 `--table`）以表格输出，消息正文只展示前 200 个字符。
 
 将指定窗格的名称设置为所属 Tab 的当前名称：
 

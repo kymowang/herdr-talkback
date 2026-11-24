@@ -654,6 +654,56 @@ class TalkbackState:
             )
         return cursor.rowcount == 1
 
+    def acknowledge_message(
+        self, message_id: str, reason: str = "acknowledged by recipient"
+    ) -> Optional[dict[str, Any]]:
+        """Mark a stored message delivered upon recipient confirmation (idempotent)."""
+        now = time.time()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            try:
+                row = db.execute(
+                    "select state, reason from messages where message_id = ?",
+                    (message_id,),
+                ).fetchone()
+                if row is None:
+                    archived = db.execute(
+                        "select message_json from message_archive where message_id = ?",
+                        (message_id,),
+                    ).fetchone()
+                    db.commit()
+                    if archived is not None:
+                        data = json.loads(archived["message_json"])
+                        if data.get("state") == MessageState.DELIVERED.value:
+                            return {
+                                "message_id": message_id,
+                                "previous_state": MessageState.DELIVERED.value,
+                                "state": MessageState.DELIVERED.value,
+                                "already_delivered": True,
+                            }
+                    return None
+                previous_state = str(row["state"])
+                already_delivered = previous_state == MessageState.DELIVERED.value
+                if not already_delivered or row["reason"] != reason:
+                    db.execute(
+                        """
+                        update messages
+                        set state = ?, reason = ?, lease_id = null, lease_expires_at = null, updated_at = ?
+                        where message_id = ?
+                        """,
+                        (MessageState.DELIVERED.value, reason, now, message_id),
+                    )
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        return {
+            "message_id": message_id,
+            "previous_state": previous_state,
+            "state": MessageState.DELIVERED.value,
+            "already_delivered": already_delivered,
+        }
+
     def list_messages(
         self, limit: Optional[int] = None, state: Optional[str] = None
     ) -> list[dict[str, Any]]:

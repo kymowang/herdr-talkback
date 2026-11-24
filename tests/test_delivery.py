@@ -3,7 +3,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from herdr_talkback.delivery import DeliveryService as RealDeliveryService
+from herdr_talkback.delivery import (
+    DeliveryService as RealDeliveryService,
+    append_ack_instruction,
+    format_ack_instruction,
+)
 
 
 class DeliveryService(RealDeliveryService):
@@ -28,15 +32,17 @@ MESSAGE_TEXT = "[lead→dev-back] ping"
 
 def test_delivery_recognizes_codex_submitted_history(tmp_path):
     async def scenario():
-        submitted = '\x1b[0m\x1b[1m\x1b[2m\x1b[48;2;50;50;50m› ' + MESSAGE_TEXT
+        message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
+        wire_text = append_ack_instruction(MESSAGE_TEXT, message.message_id)
+        submitted = '\x1b[0m\x1b[1m\x1b[2m\x1b[48;2;50;50;50m› ' + wire_text
         client = FakeClient([EMPTY_PROMPT, submitted, submitted])
         state = TalkbackState(tmp_path / 'state.db')
         state.init()
         delivery = DeliveryService(client, FakeRegistry(), state)
-        result = await delivery.deliver(parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+        result = await delivery.deliver(message)
         assert result.delivered
         sends = [params for method, params in client.requests if method == 'pane.send_input']
-        assert sends == [{'pane_id': 'p-back', 'text': MESSAGE_TEXT, 'keys': ['enter']}]
+        assert sends == [{'pane_id': 'p-back', 'text': wire_text, 'keys': ['enter']}]
 
     asyncio.run(scenario())
 
@@ -57,18 +63,20 @@ def test_old_codex_submission_does_not_confirm_a_new_delivery(tmp_path):
 
 def test_delivery_waits_for_codex_to_render_submission(tmp_path):
     async def scenario():
-        residue = '› ' + MESSAGE_TEXT
-        submitted = '\x1b[0m\x1b[1m\x1b[2m› ' + MESSAGE_TEXT
+        message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
+        wire_text = append_ack_instruction(MESSAGE_TEXT, message.message_id)
+        residue = '› ' + wire_text
+        submitted = '\x1b[0m\x1b[1m\x1b[2m› ' + wire_text
         client = FakeClient([EMPTY_PROMPT, residue, submitted, submitted])
         state = TalkbackState(tmp_path / 'state.db')
         state.init()
         sleeper = FakeSleeper()
         result = await DeliveryService(client, FakeRegistry(), state, verify_timeout_ms=500,
-                                       sleep=sleeper.sleep).deliver(parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+                                       sleep=sleeper.sleep).deliver(message)
         assert result.delivered
         sends = [params for method, params in client.requests if method == 'pane.send_input']
         assert len(sends) == 2          # original write plus the residue flush
-        assert sends[0]['text'] == MESSAGE_TEXT
+        assert sends[0]['text'] == wire_text
 
     asyncio.run(scenario())
 OCCUPIED_PROMPT = "❯ \x1b[38;2;255;255;255mhalf typed\x1b[0m"
@@ -147,6 +155,7 @@ def test_delivery_sends_when_input_empty(tmp_path):
 
 async def _delivery_sends_when_input_empty(tmp_path):
     message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
+    wire_text = append_ack_instruction(MESSAGE_TEXT, message.message_id)
     client = FakeClient(
         [
             EMPTY_PROMPT,
@@ -161,8 +170,9 @@ async def _delivery_sends_when_input_empty(tmp_path):
     assert result.delivered is True
     assert (
         "pane.send_input",
-        {"pane_id": "p-back", "text": MESSAGE_TEXT, "keys": ["enter"]},
+        {"pane_id": "p-back", "text": wire_text, "keys": ["enter"]},
     ) in client.requests
+    assert state.get_message(message.message_id)["raw_text"] == MESSAGE_TEXT
 
 
 def test_delivery_reads_only_visible_screen_for_codex_prompt(tmp_path):
@@ -292,7 +302,11 @@ async def _delivery_retries_occupied_input_until_empty(tmp_path):
     assert sleeper.delays == [30, 5]
     assert (
         "pane.send_input",
-        {"pane_id": "p-back", "text": MESSAGE_TEXT, "keys": ["enter"]},
+        {
+            "pane_id": "p-back",
+            "text": append_ack_instruction(MESSAGE_TEXT, message.message_id),
+            "keys": ["enter"],
+        },
     ) in client.requests
 
 
@@ -349,7 +363,11 @@ async def _delivery_dismisses_esc_to_cancel_overlay_before_sending(tmp_path):
     assert ("pane.send_input", {"pane_id": "p-back", "text": "", "keys": ["esc"]}) in client.requests
     assert (
         "pane.send_input",
-        {"pane_id": "p-back", "text": MESSAGE_TEXT, "keys": ["enter"]},
+        {
+            "pane_id": "p-back",
+            "text": append_ack_instruction(MESSAGE_TEXT, message.message_id),
+            "keys": ["enter"],
+        },
     ) in client.requests
     assert sleeper.delays == [0.25, 5]
 
@@ -360,10 +378,11 @@ def test_delivery_flushes_own_residue_once(tmp_path):
 
 async def _delivery_flushes_own_residue_once(tmp_path):
     message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
+    wire_text = append_ack_instruction(MESSAGE_TEXT, message.message_id)
     client = FakeClient(
         [
             EMPTY_PROMPT,
-            f"❯ \x1b[38;2;255;255;255m{MESSAGE_TEXT}\x1b[0m",
+            f"❯ \x1b[38;2;255;255;255m{wire_text}\x1b[0m",
             EMPTY_PROMPT,
         ]
     )
@@ -382,10 +401,11 @@ def test_delivery_notifies_when_message_sticks_in_input_and_is_submitted(tmp_pat
 
 async def _delivery_notifies_when_message_sticks_in_input_and_is_submitted(tmp_path):
     message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
+    wire_text = append_ack_instruction(MESSAGE_TEXT, message.message_id)
     client = FakeClient(
         [
             EMPTY_PROMPT,
-            f"❯ \x1b[38;2;255;255;255m{MESSAGE_TEXT}\x1b[0m",
+            f"❯ \x1b[38;2;255;255;255m{wire_text}\x1b[0m",
             EMPTY_PROMPT,
         ]
     )
@@ -557,7 +577,14 @@ async def _delivery_flushes_image_placeholder_residue_without_retrying(tmp_path)
     assert sleeper.delays == [5]
     sends = [request for request in client.requests if request[0] == "pane.send_input"]
     assert sends == [
-        ("pane.send_input", {"pane_id": "p-back", "text": raw_text, "keys": ["enter"]}),
+        (
+            "pane.send_input",
+            {
+                "pane_id": "p-back",
+                "text": append_ack_instruction(raw_text, message.message_id),
+                "keys": ["enter"],
+            },
+        ),
         ("pane.send_input", {"pane_id": "p-back", "text": "", "keys": ["enter"]}),
     ]
 
@@ -752,14 +779,15 @@ def test_delivery_does_not_resend_when_residue_persists(tmp_path):
 
 async def _delivery_does_not_resend_when_residue_persists(tmp_path):
     message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
-    residue = f"❯ \x1b[38;2;255;255;255m{MESSAGE_TEXT}\x1b[0m"
+    wire_text = append_ack_instruction(MESSAGE_TEXT, message.message_id)
+    residue = f"❯ \x1b[38;2;255;255;255m{wire_text}\x1b[0m"
     client = FakeClient([EMPTY_PROMPT, residue, residue, residue, residue, residue])
     state = TalkbackState(tmp_path / "state.db")
     state.init()
 
     result = await DeliveryService(client, FakeRegistry(), state, max_attempts=2).deliver(message)
 
-    raw_send = ("pane.send_input", {"pane_id": "p-back", "text": MESSAGE_TEXT, "keys": ["enter"]})
+    raw_send = ("pane.send_input", {"pane_id": "p-back", "text": wire_text, "keys": ["enter"]})
     flush_send = ("pane.send_input", {"pane_id": "p-back", "text": "", "keys": ["enter"]})
     assert result.delivered is False
     assert result.reason == "message residue not cleared"
@@ -896,13 +924,15 @@ async def _core_mode_delivers_pre_enqueued_message_without_replacing_core_state(
 
 def test_delivery_checks_for_stuck_input_five_seconds_after_send(tmp_path):
     async def scenario():
-        residue = f"❯\x1b[38;2;255;255;255m{MESSAGE_TEXT}\x1b[0m"
+        message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
+        wire_text = append_ack_instruction(MESSAGE_TEXT, message.message_id)
+        residue = f"❯\x1b[38;2;255;255;255m{wire_text}\x1b[0m"
         client = FakeClient([EMPTY_PROMPT, residue, EMPTY_PROMPT])
         sleeper = FakeSleeper()
         state = TalkbackState(tmp_path / 'state.db')
         state.init()
         result = await DeliveryService(client, FakeRegistry(), state, sleep=sleeper.sleep, post_send_check_seconds=5).deliver(
-            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+            message)
         assert sleeper.delays[0] == 5
         assert result.delivered
         assert client.requests.count(('pane.send_input', {'pane_id': 'p-back', 'text': '', 'keys': ['enter']})) == 1
@@ -928,13 +958,16 @@ def test_delayed_check_does_not_submit_different_input(tmp_path):
 def test_delivery_submits_wrapped_residue_when_zero_width_space_is_not_rendered(tmp_path):
     async def scenario():
         message_text = '[lead->dev-back] dependency sc2+A\u200bAD/cacheFixedSalt requires verification and a regression test'
+        message = parse_message(message_text, ROLES, ALIASES)
+        ack_line = format_ack_instruction(message.message_id)
         visible = ('\u203a [lead->dev-back] dependency sc2+AAD/cacheFixedSalt requires\n'
-                   '  verification and a regression test\n  tab to queue message')
+                   '  verification and a regression test\n'
+                   f'  {ack_line}\n  tab to queue message')
         client = FakeClient([EMPTY_PROMPT, visible, EMPTY_PROMPT])
         sleeper = FakeSleeper()
         state = TalkbackState(tmp_path / 'state.db'); state.init()
         result = await DeliveryService(client, FakeRegistry(), state, sleep=sleeper.sleep,
-                                       post_send_check_seconds=5).deliver(parse_message(message_text, ROLES, ALIASES))
+                                       post_send_check_seconds=5).deliver(message)
         assert result.delivered and result.reason == 'residue flushed'
         assert sleeper.delays == [5]
         assert client.requests.count(('pane.send_input', {'pane_id': 'p-back', 'text': '', 'keys': ['enter']})) == 1
@@ -977,13 +1010,15 @@ def test_stale_occupied_input_is_submitted_once_before_pending_message(tmp_path)
         client = FakeClient([TALKBACK_DRAFT_PROMPT, TALKBACK_DRAFT_PROMPT, TALKBACK_DRAFT_PROMPT,
                              TALKBACK_DRAFT_PROMPT, EMPTY_PROMPT, EMPTY_PROMPT])
         state = TalkbackState(tmp_path / 'state.db'); state.init()
+        message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
+        wire_text = append_ack_instruction(MESSAGE_TEXT, message.message_id)
         result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1,
             sleep=timer.sleep, clock=timer.clock, stale_input_seconds=600, stale_poll_seconds=300).deliver(
-                parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+                message)
         assert result.delivered and timer.now >= 600
         sends = [p for method, p in client.requests if method == 'pane.send_input']
         assert sends == [{'pane_id':'p-back','text':'','keys':['enter']},
-                         {'pane_id':'p-back','text':MESSAGE_TEXT,'keys':['enter']}]
+                         {'pane_id':'p-back','text':wire_text,'keys':['enter']}]
     asyncio.run(scenario())
 
 
@@ -1125,17 +1160,18 @@ def test_stale_input_that_cannot_be_confirmed_after_enter_blocks_pending_message
 
 def test_delivery_flushes_folded_multiline_draft_instead_of_confirming(tmp_path):
     async def scenario():
-        message = "[lead→dev-back] ping\n第二行\n第三行"
-        folded = "❯ [[lead→dev-… +2L]"
+        raw_message = "[lead→dev-back] ping\n第二行\n第三行"
+        message = parse_message(raw_message, ROLES, ALIASES)
+        wire_text = append_ack_instruction(raw_message, message.message_id)
+        folded = "❯ [[lead→dev-… +3L]"
         client = FakeClient([EMPTY_PROMPT, folded, EMPTY_PROMPT])
         state = TalkbackState(tmp_path / "state.db")
         state.init()
-        result = await DeliveryService(client, FakeRegistry(), state).deliver(
-            parse_message(message, ROLES, ALIASES))
+        result = await DeliveryService(client, FakeRegistry(), state).deliver(message)
         assert result.delivered
         assert result.reason == "residue flushed"
         sends = [params for method, params in client.requests if method == "pane.send_input"]
-        assert sends[0] == {"pane_id": "p-back", "text": message, "keys": ["enter"]}
+        assert sends[0] == {"pane_id": "p-back", "text": wire_text, "keys": ["enter"]}
         assert sends[-1] == {"pane_id": "p-back", "text": "", "keys": ["enter"]}
 
     asyncio.run(scenario())
@@ -1144,7 +1180,7 @@ def test_delivery_flushes_folded_multiline_draft_instead_of_confirming(tmp_path)
 def test_flush_waits_for_composer_repaint_before_failing(tmp_path):
     async def scenario():
         message = "[lead→dev-back] ping\n第二行\n第三行"
-        folded = "❯ [[lead→dev-… +2L]"
+        folded = "❯ [[lead→dev-… +3L]"
         client = FakeClient([EMPTY_PROMPT, folded, folded, EMPTY_PROMPT])
         state = TalkbackState(tmp_path / "state.db")
         state.init()
@@ -1159,12 +1195,14 @@ def test_flush_waits_for_composer_repaint_before_failing(tmp_path):
 
 def test_flush_retries_a_plain_residue_read_before_failing(tmp_path):
     async def scenario():
-        residue = f"❯ \x1b[38;2;255;255;255m{MESSAGE_TEXT}\x1b[0m"
+        message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
+        wire_text = append_ack_instruction(MESSAGE_TEXT, message.message_id)
+        residue = f"❯ \x1b[38;2;255;255;255m{wire_text}\x1b[0m"
         client = FakeClient([EMPTY_PROMPT, residue, residue, EMPTY_PROMPT])
         state = TalkbackState(tmp_path / "state.db")
         state.init()
         result = await DeliveryService(client, FakeRegistry(), state, sleep=FakeSleeper().sleep).deliver(
-            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+            message)
         assert result.delivered
         assert result.reason == "residue flushed"
 
@@ -1210,5 +1248,73 @@ def test_verify_reports_unreadable_after_full_schedule(tmp_path):
         service = DeliveryService(client, FakeRegistry(), TalkbackState(tmp_path / "state.db"),
                                   sleep=FakeSleeper().sleep)
         assert await service._verify("p-back", MESSAGE_TEXT) == "unreadable"
+
+    asyncio.run(scenario())
+
+
+def test_delivery_accepts_recipient_ack_during_verification(tmp_path):
+    async def scenario():
+        message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+        notifier = FakeNotifier()
+        client = FakeClient([EMPTY_PROMPT, OCCUPIED_PROMPT])
+
+        async def ack_on_second_sleep(delay):
+            sleeper.delays.append(delay)
+            if len(sleeper.delays) == 2:
+                state.acknowledge_message(message.message_id)
+
+        sleeper = FakeSleeper()
+        result = await DeliveryService(
+            client,
+            FakeRegistry(),
+            state,
+            max_attempts=1,
+            sleep=ack_on_second_sleep,
+            notifier=notifier,
+        ).deliver(message)
+
+        assert result.delivered is True
+        assert result.reason == "acknowledged by recipient"
+        assert sleeper.delays == [5, 10]
+        assert notifier.notifications == []
+        row = state.get_message(message.message_id)
+        assert row["state"] == "delivered"
+        assert row["reason"] == "acknowledged by recipient"
+        assert row["raw_text"] == MESSAGE_TEXT
+        sends = [params for method, params in client.requests if method == "pane.send_input"]
+        assert sends == [
+            {
+                "pane_id": "p-back",
+                "text": append_ack_instruction(MESSAGE_TEXT, message.message_id),
+                "keys": ["enter"],
+            }
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_delivery_skips_residue_flush_when_recipient_already_acknowledged(tmp_path):
+    async def scenario():
+        message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)
+        wire_text = append_ack_instruction(MESSAGE_TEXT, message.message_id)
+        residue = f"❯ \x1b[38;2;255;255;255m{wire_text}\x1b[0m"
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+
+        class AckAfterFirstReadClient(FakeClient):
+            async def request(self, method, params):
+                response = await super().request(method, params)
+                if method == "pane.read" and len([m for m, _ in self.requests if m == "pane.read"]) == 2:
+                    state.acknowledge_message(message.message_id)
+                return response
+
+        client = AckAfterFirstReadClient([EMPTY_PROMPT, residue])
+        result = await DeliveryService(client, FakeRegistry(), state, max_attempts=1).deliver(message)
+
+        assert result.delivered is True
+        assert result.reason == "acknowledged by recipient"
+        assert client.requests.count(("pane.send_input", {"pane_id": "p-back", "text": "", "keys": ["enter"]})) == 0
 
     asyncio.run(scenario())

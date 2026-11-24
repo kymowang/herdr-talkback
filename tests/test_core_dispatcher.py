@@ -473,6 +473,41 @@ async def _terminal_cas_false_is_retained_and_surfaced_by_drain(tmp_path):
     assert unhandled == []
 
 
+def test_dispatcher_tolerates_concurrent_recipient_ack_without_losing_ownership(tmp_path):
+    asyncio.run(_dispatcher_tolerates_concurrent_recipient_ack_without_losing_ownership(tmp_path))
+
+
+async def _dispatcher_tolerates_concurrent_recipient_ack_without_losing_ownership(tmp_path):
+    state, registry = configured_state_and_registry(tmp_path)
+
+    class AckingAdapter(RecordingAdapter):
+        async def deliver(self, message, lease):
+            self.message_ids.append(message.message_id)
+            assert lease.accept("accepted by fake adapter")
+            if message.message_id == "first-acked":
+                state.acknowledge_message(message.message_id)
+                return AdapterDeliveryResult(
+                    AdapterDeliveryState.DELIVERED,
+                    "acknowledged by recipient",
+                    1,
+                )
+            return self.result
+
+    adapter = AckingAdapter()
+    dispatcher = CoreDispatcher(state, registry, {"fake": adapter}, lease_ids())
+    enqueue(state, "first-acked", "linux-main/dev-back")
+    enqueue(state, "second-normal", "linux-main/dev-back")
+
+    dispatcher.wake("linux-main/dev-back")
+    await dispatcher.drain()
+
+    assert adapter.message_ids == ["first-acked", "second-normal"]
+    first = state.get_message("first-acked")
+    assert first["state"] == "delivered"
+    assert first["reason"] == "acknowledged by recipient"
+    assert state.get_message("second-normal")["state"] == "delivered"
+
+
 def test_recover_requeues_expired_offered_once(tmp_path):
     asyncio.run(_recover_requeues_expired_offered_once(tmp_path))
 

@@ -221,6 +221,12 @@ class CoreDispatcher:
                 clear_lease=clear_lease,
             )
             if not transitioned:
+                try:
+                    current = self.state.get_message(claimed["message_id"])
+                except KeyError:
+                    current = None
+                if current is not None and current["state"] == CoreMessageState.DELIVERED.value:
+                    continue
                 raise RuntimeError(
                     "lost terminal transition ownership for message {0}".format(
                         claimed["message_id"]

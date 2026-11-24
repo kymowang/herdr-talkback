@@ -523,7 +523,7 @@ def _is_expected_image_placeholder_residue(visible: str, expected_message: str) 
 
     rendered_tail = _normalize_visible(IMAGE_PLACEHOLDER_RE.sub("", visible))
     expected = _normalize_visible(expected_message)
-    return bool(len(rendered_tail) >= 24 and expected.endswith(rendered_tail))
+    return bool(len(rendered_tail) >= 24 and rendered_tail in expected)
 
 
 def _has_dim_sgr(text: str) -> bool:

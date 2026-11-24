@@ -117,3 +117,29 @@ def test_retry_uses_durably_pinned_instance_not_shared_client_cache(tmp_path):
         assert result.state.value == 'delivered'
 
     asyncio.run(scenario())
+
+
+def test_recipient_ack_propagates_delivered_receipt_to_sender_peer(tmp_path):
+    from herdr_talkback.adapters.peer import PeerAdapter
+    from herdr_talkback.peer_http import PeerServer
+
+    async def scenario():
+        receiver_cfg, receiver = make_node(tmp_path, 'receiver', 'sender')
+        sender_cfg, sender = make_node(tmp_path, 'sender', 'receiver')
+
+        def wake(_endpoint):
+            receiver.state.acknowledge_message('msg_delivery')
+
+        async with PeerServer(receiver_cfg, receiver, SimpleNamespace(wake=wake)) as server:
+            peer = replace(sender_cfg.peers['receiver'], url=f'https://127.0.0.1:{server.bound_port}',
+                           ca_file=receiver_cfg.network.cert_file)
+            sender_cfg.peers['receiver'] = peer
+            adapter = PeerAdapter(sender_cfg, sender, EndpointRegistry(), retry_delay=lambda count: 0)
+            adapter.ensure_endpoint(EndpointAddress('receiver', 'agent'))
+            lease = DeliveryLease('msg_delivery', 'lease', 'peer', lambda reason: True)
+            result = await adapter.deliver(message(), lease)
+            assert result.state.value == 'delivered'
+            assert result.reason == 'acknowledged by recipient'
+            assert receiver.state.get_message('msg_delivery')['state'] == 'delivered'
+
+    asyncio.run(scenario())

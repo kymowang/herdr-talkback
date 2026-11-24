@@ -86,6 +86,20 @@ def test_parser_accepts_exec_command():
     assert args.exec_command == "/status"
 
 
+def test_parser_accepts_queue_format_options():
+    parser = build_parser()
+    assert parser.parse_args(["queue"]).format == "json"
+    assert parser.parse_args(["queue", "--format", "json"]).format == "json"
+    assert parser.parse_args(["queue", "--format", "table"]).format == "table"
+    assert parser.parse_args(["queue", "--table"]).format == "table"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["queue", "--format", "json", "--table"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["queue", "--format", "table", "--table"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["queue", "--format", "csv"])
+
+
 def test_main_returns_130_on_keyboard_interrupt(monkeypatch):
     async def raise_keyboard_interrupt(args):
         raise KeyboardInterrupt
@@ -272,6 +286,94 @@ async def _queue_reads_active_messages_without_herdr_socket(monkeypatch, tmp_pat
     assert "msg_failed" not in output
 
 
+def test_queue_table_format_and_200_char_message_truncation(monkeypatch, tmp_path, capsys):
+    asyncio.run(_queue_table_format_and_200_char_message_truncation(monkeypatch, tmp_path, capsys))
+
+
+async def _queue_table_format_and_200_char_message_truncation(monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv("HERDR_SOCKET_PATH", raising=False)
+    state_path = tmp_path / "state.db"
+    state = TalkbackState(state_path)
+    state.init()
+    long_ascii_prefix = "A" * 200
+    long_ascii_body = long_ascii_prefix + "Z_SHOULD_BE_TRUNCATED"
+    long_cjk_prefix = "测" * 200
+    long_cjk_body = long_cjk_prefix + "尾"
+    state.enqueue_message(
+        CoreMessage(
+            message_id="msg_long",
+            source_endpoint="linux-main/开发",
+            target_endpoint="linux-main/dev-back",
+            body=long_ascii_body,
+            raw_text=f"[开发→dev-back] {long_ascii_body}",
+            state=CoreMessageState.QUEUED,
+            conversation_id="msg_long",
+        )
+    )
+    state.enqueue_message(
+        CoreMessage(
+            message_id="msg_cjk",
+            source_endpoint="linux-main/lead",
+            target_endpoint="openclaw/worker",
+            body=long_cjk_body,
+            raw_text=f"[lead→openclaw/worker] {long_cjk_body}",
+            state=CoreMessageState.WAITING_ENDPOINT,
+            conversation_id="msg_cjk",
+        )
+    )
+    state.create_message("msg_legacy", "lead", "runner", "p-runner", "[lead→runner] line1\nline2")
+    config_file = tmp_path / "herdr-talkback.toml"
+    config_file.write_text(f'state_path = "{state_path.as_posix()}"\n', encoding="utf-8")
+
+    # Default JSON output preserves full untruncated message content.
+    args = build_parser().parse_args(["--config", str(config_file), "queue"])
+    assert await cli._main_async(args) == 0
+    json_lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    by_id = {row["message_id"]: row for row in json_lines}
+    assert by_id["msg_long"]["body"] == long_ascii_body
+    assert by_id["msg_cjk"]["body"] == long_cjk_body
+
+    # Explicit --format table and --table shorthand both render the same truncated table.
+    outputs = []
+    for extra in (["--format", "table"], ["--table"]):
+        args = build_parser().parse_args(["--config", str(config_file), "queue"] + extra)
+        assert await cli._main_async(args) == 0
+        outputs.append(capsys.readouterr().out)
+    assert outputs[0] == outputs[1]
+    table_output = outputs[0]
+    lines = table_output.splitlines()
+    assert len(lines) == 5  # Header, separator, three active messages.
+    assert "ID" in lines[0] and "SOURCE" in lines[0] and "TARGET" in lines[0] and "MESSAGE" in lines[0]
+    assert long_ascii_prefix in table_output
+    assert "Z_SHOULD_BE_TRUNCATED" not in table_output
+    assert long_cjk_prefix in table_output
+    assert "尾" not in table_output
+    assert "[lead→runner] line1 line2" in table_output
+    # Zero attempts should be shown as 0, not '-'.
+    long_line = next(line for line in lines[2:] if "msg_long" in line)
+    cjk_line = next(line for line in lines[2:] if "msg_cjk" in line)
+    assert cli._display_width(long_line.split("linux-main/dev-back")[0]) == cli._display_width(
+        cjk_line.split("openclaw/worker")[0]
+    )
+    assert " 0 " in long_line or "  0  " in long_line
+
+
+def test_queue_table_reports_empty_queue(monkeypatch, tmp_path, capsys):
+    asyncio.run(_queue_table_reports_empty_queue(monkeypatch, tmp_path, capsys))
+
+
+async def _queue_table_reports_empty_queue(monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv("HERDR_SOCKET_PATH", raising=False)
+    state_path = tmp_path / "empty.db"
+    TalkbackState(state_path).init()
+    config_file = tmp_path / "herdr-talkback.toml"
+    config_file.write_text(f'state_path = "{state_path.as_posix()}"\n', encoding="utf-8")
+
+    args = build_parser().parse_args(["--config", str(config_file), "queue", "--format", "table"])
+    assert await cli._main_async(args) == 0
+    assert capsys.readouterr().out.strip() == "No queued messages."
+
+
 def test_message_list_reads_history_with_state_filter(monkeypatch, tmp_path, capsys):
     asyncio.run(_message_list_reads_history_with_state_filter(monkeypatch, tmp_path, capsys))
 
@@ -333,6 +435,78 @@ async def _message_cancel_stops_a_nonterminal_message_only(monkeypatch, tmp_path
     args = build_parser().parse_args(["--config", str(config_file), "message", "cancel", "msg_done"])
     assert await cli._main_async(args) == 1
     assert state.get_message("msg_done")["state"] == "delivered"
+
+
+def test_message_ack_marks_message_delivered_and_is_idempotent(monkeypatch, tmp_path, capsys):
+    asyncio.run(_message_ack_marks_message_delivered_and_is_idempotent(monkeypatch, tmp_path, capsys))
+
+
+async def _message_ack_marks_message_delivered_and_is_idempotent(monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv("HERDR_SOCKET_PATH", raising=False)
+    state_path = tmp_path / "state.db"
+    state = TalkbackState(state_path)
+    state.init()
+    state.create_message("msg_archived", "lead", "runner", "p-runner", "[lead→runner] old")
+    state.update_message_state("msg_archived", MessageState.DELIVERED, "input cleared")
+    state.archive_messages_older_than(cutoff=10**12)
+    state.enqueue_message(CoreMessage(
+        message_id="msg_unknown", source_endpoint="openclaw/lead",
+        target_endpoint="linux-main/codex2", body="hello", raw_text="[lead→codex2] hello",
+        state=CoreMessageState.DELIVERY_UNKNOWN, conversation_id="msg_unknown"))
+    state.create_message("msg_failed", "lead", "runner", "p-runner", "[lead→runner] maybe")
+    state.update_message_state("msg_failed", MessageState.FAILED, "pane input unreadable")
+    config_file = tmp_path / "herdr-talkback.toml"
+    config_file.write_text(f'state_path = "{state_path.as_posix()}"\n', encoding="utf-8")
+
+    # Acknowledge delivery_unknown -> delivered.
+    args = build_parser().parse_args(["--config", str(config_file), "message", "ack", "msg_unknown"])
+    assert await cli._main_async(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["previous_state"] == "delivery_unknown"
+    assert payload["state"] == "delivered"
+    assert payload["already_delivered"] is False
+    assert state.get_message("msg_unknown")["state"] == "delivered"
+    assert state.get_message("msg_unknown")["reason"] == "acknowledged by recipient"
+
+    # Re-acking an already delivered message is idempotent.
+    assert await cli._main_async(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["already_delivered"] is True
+
+    # Acknowledge a message that failed during verification (e.g., unreadable composer).
+    args = build_parser().parse_args(["--config", str(config_file), "message", "ack", "msg_failed"])
+    assert await cli._main_async(args) == 0
+    assert state.get_message("msg_failed")["state"] == "delivered"
+    capsys.readouterr()
+
+    # Archived delivered message also acks idempotently.
+    args = build_parser().parse_args(["--config", str(config_file), "message", "ack", "msg_archived"])
+    assert await cli._main_async(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True and payload["already_delivered"] is True
+
+    # Unknown message id returns non-zero.
+    args = build_parser().parse_args(["--config", str(config_file), "message", "ack", "msg_missing"])
+    assert await cli._main_async(args) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False and payload["error"] == "message not found"
+
+
+def test_message_ack_auto_discovers_plugin_config(monkeypatch, tmp_path, capsys):
+    state_path = tmp_path / "state.db"
+    state = TalkbackState(state_path)
+    state.init()
+    state.create_message("msg_auto", "lead", "dev-back", "p-back", "[lead→dev-back] hi")
+    config_file = tmp_path / "config.toml"
+    config_file.write_text(f'state_path = "{state_path.as_posix()}"\n', encoding="utf-8")
+
+    monkeypatch.setattr(cli, "_discover_plugin_config", lambda: config_file)
+    assert cli.main(["message", "ack", "msg_auto"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True and payload["state"] == "delivered"
+    assert state.get_message("msg_auto")["state"] == "delivered"
 
 
 def test_alerts_reads_open_alerts_without_herdr_socket(monkeypatch, tmp_path, capsys):

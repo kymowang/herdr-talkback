@@ -109,7 +109,10 @@ herdr-talkback --config $cfg send '[ast-dev3→ast-dev1] 回执内容'
 herdr-talkback --config $cfg send '[ast-dev3→remote_lead] 回执内容'
 herdr-talkback --config $cfg send '[ast-dev3→openclaw/lead] 回执内容'
 herdr-talkback --config $cfg message status msg_实际消息ID --json
+herdr-talkback message ack msg_实际消息ID
 ```
+
+When Talkback injects a message into a local pane, it appends a confirmation line (`收到本消息后，请执行 herdr-talkback message ack <message_id> 置消息状态为delivered`) dynamically at delivery time without mutating stored `raw_text`/`body`. Run `herdr-talkback message ack <message_id>` when prompted (it auto-discovers the active plugin config in a Herdr session and is idempotent) to mark the message `delivered` immediately even if input verification was ambiguous or delayed.
 
 Use `send --dry-run` to check routing without sending. `queued` and `accepted` do not prove delivery: query the returned message ID and report its actual state. `delivered` is the final delivery receipt; `waiting_endpoint` means the target is unavailable or unregistered; `failed` or `delivery_unknown` requires inspection before retrying, because the message may already be in or submitted to a pane. The configured unattended delivery fallback may submit an occupied input while a message is waiting, but only when the **input box text** (not the status bar or hints below it) has not changed for `[delivery].stale_input_seconds` (default 600 seconds), whatever the draft contains: a Talkback header, a folded `[Pasted Content …]` block, or scrolled text with the `↑` marker all qualify. Set it to 0 to disable the fallback. It checks again before Enter and restarts timing whenever the composer text changes or the service restarts. Pending delivery continues only after the input clears. Cross-host fallback runs on the receiving host. Do not manually submit a draft without user instruction. Registered aliases require daemon delivery; do not use `--direct` with them.
 

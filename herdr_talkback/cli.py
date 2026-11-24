@@ -13,7 +13,7 @@ import time
 import unicodedata
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 try:
     import tomllib
@@ -104,6 +104,9 @@ def build_parser() -> argparse.ArgumentParser:
     message_list.add_argument('--limit', type=int, default=20, help='Number of messages to show')
     message_list.add_argument('--state', help='Only messages in this state, e.g. delivered')
     message_list.add_argument('--json', action='store_true', help='Print one JSON array')
+    message_ack = message_sub.add_parser(
+        'ack', help='Mark a message as delivered after receiving it')
+    message_ack.add_argument('message_id')
     message_cancel = message_sub.add_parser(
         'cancel', help='Stop dispatching a non-terminal message and mark it failed')
     message_cancel.add_argument('message_id')
@@ -137,7 +140,23 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("target")
     status.add_argument("--json", action="store_true")
 
-    sub.add_parser("queue", help="List unfinished (non-terminal) messages")
+    queue = sub.add_parser("queue", help="List unfinished (non-terminal) messages")
+    queue.set_defaults(format="json")
+    queue_format = queue.add_mutually_exclusive_group()
+    queue_format.add_argument(
+        "--format",
+        choices=("json", "table"),
+        default=argparse.SUPPRESS,
+        help="Output format: json (default) or table",
+    )
+    queue_format.add_argument(
+        "--table",
+        dest="format",
+        action="store_const",
+        const="table",
+        default=argparse.SUPPRESS,
+        help="Format output as a table (shorthand for --format table)",
+    )
     alerts = sub.add_parser("alerts", help="Show or clear Talkback alerts")
     alerts.add_argument("--limit", type=int, default=20)
     alerts.add_argument("-f", "--follow", action="store_true")
@@ -232,6 +251,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         if args.config is None:
             args.config = _discover_plugin_config()
     elif args.command == 'version' and args.config is None:
+        args.config = _discover_plugin_config()
+    elif args.command == 'message' and args.message_command == 'ack' and args.config is None:
         args.config = _discover_plugin_config()
     elif args.command == 'pane' and args.pane_command == 'identity' and args.config is None:
         args.config = _discover_plugin_config()
@@ -468,6 +489,17 @@ async def _main_async(args) -> int:
     if args.command == 'message':
         from .peer_state import PeerStore
         state = _load_read_state(args.config)
+        if args.message_command == 'ack':
+            result = state.acknowledge_message(args.message_id)
+            if result is None:
+                print(json.dumps({
+                    'ok': False,
+                    'message_id': args.message_id,
+                    'error': 'message not found',
+                }, ensure_ascii=False))
+                return 1
+            print(json.dumps({'ok': True, **result}, ensure_ascii=False))
+            return 0
         if args.message_command == 'cancel':
             canceled = state.cancel_message(args.message_id)
             print(json.dumps({
@@ -508,8 +540,12 @@ async def _main_async(args) -> int:
 
     if args.command == "queue":
         state = _load_read_state(args.config)
-        for message in state.list_active_messages():
-            print(json.dumps(message, ensure_ascii=False))
+        messages = state.list_active_messages()
+        if args.format == "table":
+            print(_format_queue_table(messages))
+        else:
+            for message in messages:
+                print(json.dumps(message, ensure_ascii=False))
         return 0
 
     if args.command == "retry":
@@ -924,12 +960,46 @@ async def _name_panes_from_tabs(client, panes, pane_id: Optional[str], force: bo
     return 1 if failed else 0
 
 
+QUEUE_MESSAGE_PREVIEW_LIMIT = 200
+
+
 def _display_width(text: str) -> int:
     return sum(
         0 if unicodedata.combining(char) else
         2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
         for char in text
     )
+
+
+def _normalize_table_cell(value, *, max_chars: Optional[int] = None) -> str:
+    # Keep each row on one line and prevent terminal control characters
+    # in labels, paths, or message bodies from disturbing the table.
+    if value is None or value == "":
+        return "-"
+    text = "".join(" " if unicodedata.category(c).startswith("C") else c for c in str(value))
+    text = " ".join(text.split())
+    if not text:
+        return "-"
+    if max_chars is not None and len(text) > max_chars:
+        text = text[:max_chars]
+    return text
+
+
+def _render_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    all_rows = [list(headers), *[list(row) for row in rows]]
+    widths = [max(_display_width(row[i]) for row in all_rows) for i in range(len(headers))]
+
+    def render(row):
+        return "  ".join(
+            value + " " * (width - _display_width(value))
+            for value, width in zip(row, widths)
+        ).rstrip()
+
+    return "\n".join([
+        render(all_rows[0]),
+        render(["-" * width for width in widths]),
+        *(render(row) for row in all_rows[1:]),
+    ])
 
 
 def _format_pane_table(panes) -> str:
@@ -942,30 +1012,46 @@ def _format_pane_table(panes) -> str:
         ("TAB NAME", "tab_label"), ("CWD", "cwd"),
     )
 
-    def cell(value):
-        # Keep each pane on one line and prevent terminal control characters
-        # in labels or paths from disturbing the table.
-        text = str(value) if value else "-"
-        text = ''.join(' ' if unicodedata.category(c).startswith('C') else c for c in text)
-        return ' '.join(text.split()) or "-"
-
-    rows = [[title for title, _ in columns]]
+    rows = []
     for pane in panes:
         values = dict(pane)
         values['terminal_title_stripped'] = pane.get('terminal_title_stripped') or pane.get('terminal_title')
-        rows.append([cell(values.get(key)) for _, key in columns])
-    widths = [max(_display_width(row[i]) for row in rows) for i in range(len(columns))]
+        rows.append([_normalize_table_cell(values.get(key)) for _, key in columns])
+    return _render_table([title for title, _ in columns], rows)
 
-    def render(row):
-        return '  '.join(
-            value + ' ' * (width - _display_width(value))
-            for value, width in zip(row, widths)
-        ).rstrip()
 
-    return '\n'.join([
-        render(rows[0]), render(['-' * width for width in widths]),
-        *(render(row) for row in rows[1:]),
-    ])
+def _format_queue_timestamp(value) -> str:
+    if value is None or value == "":
+        return "-"
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(value)))
+    except (TypeError, ValueError, OSError):
+        return _normalize_table_cell(value)
+
+
+def _format_queue_table(messages) -> str:
+    if not messages:
+        return "No queued messages."
+
+    headers = ("ID", "SOURCE", "TARGET", "STATE", "ATTEMPTS", "REASON", "UPDATED", "MESSAGE")
+    rows = []
+    for message in messages:
+        body = message.get("body")
+        raw_message = body if isinstance(body, str) and body.strip() else message.get("raw_text")
+        timestamp = message.get("updated_at")
+        if timestamp is None or timestamp == "":
+            timestamp = message.get("created_at")
+        rows.append([
+            _normalize_table_cell(message.get("message_id")),
+            _normalize_table_cell(message.get("source_endpoint") or message.get("source")),
+            _normalize_table_cell(message.get("target_endpoint") or message.get("target")),
+            _normalize_table_cell(message.get("state")),
+            _normalize_table_cell(message.get("attempts")),
+            _normalize_table_cell(message.get("reason")),
+            _format_queue_timestamp(timestamp),
+            _normalize_table_cell(raw_message, max_chars=QUEUE_MESSAGE_PREVIEW_LIMIT),
+        ])
+    return _render_table(headers, rows)
 
 
 def _pane_status_diagnostic(registry: RoleRegistry, target: str) -> Optional[dict]:
