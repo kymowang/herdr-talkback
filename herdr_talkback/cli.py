@@ -870,6 +870,7 @@ async def _main_async(args) -> int:
             notifier=notifier,
             verify_timeout_ms=getattr(cfg, "delivery_verify_timeout_ms", 0),
             stale_input_seconds=getattr(cfg, 'delivery_stale_input_seconds', 600),
+            key_delay_seconds=getattr(cfg, 'delivery_key_delay_seconds', 0.3),
         )
         result = await delivery.deliver(message)
         print(

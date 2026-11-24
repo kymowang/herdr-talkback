@@ -169,6 +169,7 @@ async def run_service(config, dry_run: bool = False) -> int:
         retry_interval_seconds=config.delivery_retry_interval_seconds,
         verify_timeout_ms=getattr(config, "delivery_verify_timeout_ms", 0),
         stale_input_seconds=getattr(config, 'delivery_stale_input_seconds', 600),
+        key_delay_seconds=getattr(config, 'delivery_key_delay_seconds', 0.3),
         notifier=notifier,
         manage_message_state=False,
         admission_gate=admission_gate,

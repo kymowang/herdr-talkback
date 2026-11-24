@@ -255,3 +255,14 @@ def test_legacy_config_is_used_when_plugin_config_is_absent(monkeypatch, tmp_pat
     (legacy / "config.toml").write_text('[delivery]\nmax_attempts = 3\n', encoding="utf-8")
 
     assert load_config(None).delivery_max_attempts == 3
+
+
+def test_delivery_key_delay_is_configurable(tmp_path):
+    path = tmp_path / 'talkback.toml'
+    path.write_text('[delivery]\nkey_delay_seconds = 0\n', encoding='utf-8')
+    assert load_config(path).delivery_key_delay_seconds == 0
+    path.write_text('[delivery]\nkey_delay_seconds = 1.5\n', encoding='utf-8')
+    assert load_config(path).delivery_key_delay_seconds == 1.5
+    path.write_text('[delivery]\nkey_delay_seconds = -1\n', encoding='utf-8')
+    with pytest.raises(ValueError, match='key_delay_seconds'):
+        load_config(path)

@@ -8,6 +8,9 @@ verify_timeout_ms = 5000
 # Submit a draft that starts with a message header when the input box text has
 # not changed for 10 minutes; 0 disables this fallback.
 stale_input_seconds = 600
+# Wait this long between typing the message and pressing Enter, so a CLI cannot
+# fold the Enter into the draft; 0 writes and submits in one call.
+key_delay_seconds = 0.3
 
 # Remote administration is disabled unless explicitly enabled for each peer.
 # Add `allow_remote_control = true` to a trusted [peers.<node>] entry to allow

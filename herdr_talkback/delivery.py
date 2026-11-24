@@ -48,6 +48,7 @@ class DeliveryService:
         verify_read_schedule: tuple = (5, 10, 30, 60, 120),
         stale_input_seconds: float = 0,
         stale_poll_seconds: float = 30,
+        key_delay_seconds: float = 0,
         clock: Callable[[], float] = time.monotonic,
         admission_gate=None,
     ) -> None:
@@ -67,6 +68,7 @@ class DeliveryService:
             raise ValueError('invalid stale input timing')
         self.stale_input_seconds = stale_input_seconds
         self.stale_poll_seconds = stale_poll_seconds
+        self.key_delay_seconds = key_delay_seconds
         self.clock = clock
         self.admission_gate = admission_gate
 
@@ -133,9 +135,7 @@ class DeliveryService:
                     message.message_id, pane_id, wire_text, attempt, agent=agent)
 
             self._update_message_state(message.message_id, MessageState.SENDING, "sending message")
-            await self.client.request(
-                "pane.send_input", {"pane_id": pane_id, "text": wire_text, "keys": ["enter"]}
-            )
+            await self._write(pane_id, wire_text)
             self.state.record_attempt(message.message_id, attempt, "sending", "verifying", "pane.send_input sent")
             self._update_message_state(message.message_id, MessageState.VERIFYING, "verifying delivery")
 
@@ -192,7 +192,7 @@ class DeliveryService:
         if before_state.kind == "residue":
             return await self._flush_control_residue(pane_id, text)
 
-        await self.client.request("pane.send_input", {"pane_id": pane_id, "text": text, "keys": ["enter"]})
+        await self._write(pane_id, text)
         if strict:
             verified = await self._verify(pane_id, text, timeout_ms=max(500, self.verify_timeout_ms))
             if verified == 'delivered':
@@ -216,6 +216,24 @@ class DeliveryService:
             return getattr(getter(role), "agent", None)
         except Exception:
             return None
+
+    async def _write(self, pane_id: str, text: str) -> None:
+        """Type the text, then submit it.
+
+        Pressing Enter in the same write can be swallowed by a CLI that treats
+        the whole write as a paste, leaving the message in the composer as a
+        trailing newline. key_delay_seconds > 0 writes and submits separately.
+        """
+        if self.key_delay_seconds <= 0:
+            await self.client.request(
+                "pane.send_input", {"pane_id": pane_id, "text": text, "keys": ["enter"]}
+            )
+            return
+        await self.client.request("pane.send_input", {"pane_id": pane_id, "text": text})
+        await self.sleep(self.key_delay_seconds)
+        await self.client.request(
+            "pane.send_input", {"pane_id": pane_id, "text": "", "keys": ["enter"]}
+        )
 
     async def _read_input(self, pane_id: str) -> str:
         result = await self.client.request(

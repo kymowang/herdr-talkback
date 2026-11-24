@@ -41,6 +41,7 @@ class TalkbackConfig:
     delivery_retry_interval_seconds: float = 30
     delivery_verify_timeout_ms: int = 5000
     delivery_stale_input_seconds: float = 600
+    delivery_key_delay_seconds: float = 0.3
     monitor_unknown_threshold_seconds: int = 60
     monitor_continue_cooldown_seconds: int = 120
     monitor_max_continues_per_30m: int = 3
@@ -119,6 +120,9 @@ def load_config(path: Optional[Path]) -> TalkbackConfig:
     stale_input_seconds = float(delivery.get('stale_input_seconds', 600))
     if not math.isfinite(stale_input_seconds) or stale_input_seconds < 0:
         raise ValueError('delivery.stale_input_seconds must be a finite nonnegative number')
+    key_delay_seconds = float(delivery.get('key_delay_seconds', 0.3))
+    if not math.isfinite(key_delay_seconds) or key_delay_seconds < 0:
+        raise ValueError('delivery.key_delay_seconds must be a finite nonnegative number')
 
     return TalkbackConfig(
         socket_path=Path(raw.get("socket_path") or default_socket_path()),
@@ -133,6 +137,7 @@ def load_config(path: Optional[Path]) -> TalkbackConfig:
         delivery_retry_interval_seconds=float(delivery.get("retry_interval_seconds", 30)),
         delivery_verify_timeout_ms=int(delivery.get("verify_timeout_ms", 5000)),
         delivery_stale_input_seconds=stale_input_seconds,
+        delivery_key_delay_seconds=key_delay_seconds,
         monitor_unknown_threshold_seconds=int(monitor.get("unknown_threshold_seconds", 60)),
         monitor_continue_cooldown_seconds=int(monitor.get("continue_cooldown_seconds", 120)),
         monitor_max_continues_per_30m=int(monitor.get("max_continues_per_30m", 3)),

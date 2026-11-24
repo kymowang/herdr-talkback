@@ -1343,3 +1343,40 @@ def test_delivery_proceeds_when_agy_composer_shows_its_placeholder(tmp_path):
         assert sends[0]["keys"] == ["enter"]
         assert sends[0]["text"].startswith(MESSAGE_TEXT)
     asyncio.run(scenario())
+
+
+def test_delivery_writes_then_submits_after_a_key_delay(tmp_path):
+    async def scenario():
+        client = FakeClient([EMPTY_PROMPT, EMPTY_PROMPT])
+        sleeper = FakeSleeper()
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+
+        result = await DeliveryService(client, FakeRegistry(), state, sleep=sleeper.sleep,
+                                       key_delay_seconds=0.3).deliver(
+            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+
+        assert result.delivered
+        sends = [params for method, params in client.requests if method == "pane.send_input"]
+        assert len(sends) == 2
+        assert sends[0]["text"].startswith(MESSAGE_TEXT)
+        assert "keys" not in sends[0]
+        assert sends[1] == {"pane_id": "p-back", "text": "", "keys": ["enter"]}
+        assert sleeper.delays[0] == 0.3
+    asyncio.run(scenario())
+
+
+def test_delivery_keeps_one_write_when_the_key_delay_is_disabled(tmp_path):
+    async def scenario():
+        client = FakeClient([EMPTY_PROMPT, EMPTY_PROMPT])
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+
+        result = await DeliveryService(client, FakeRegistry(), state).deliver(
+            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+
+        assert result.delivered
+        sends = [params for method, params in client.requests if method == "pane.send_input"]
+        assert len(sends) == 1
+        assert sends[0]["keys"] == ["enter"]
+    asyncio.run(scenario())
