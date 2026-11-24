@@ -23,6 +23,9 @@ FOLDED_PASTE_MIN_PREFIX = 8
 FOLDING_AGENTS = ("cmd",)
 IMAGE_PLACEHOLDER_RE = re.compile(r"\[Image #\d+\]\s*")
 PROMPT_MARKERS = ("❯", "›")
+# A `»` prompt sits at visible column zero, but the line may start with SGR
+# sequences; consuming them keeps "indented chrome is not a prompt" intact.
+CHEVRON_PROMPT_RE = re.compile(r"^(?:\x1b\[[0-9;?]*[A-Za-z])*\u00bb", re.MULTILINE)
 # agy (Antigravity CLI) uses no ❯/› marker: its composer is a full-width
 # horizontal rule, a `>` line holding the draft, and a matching rule, with the
 # CLI's footer hint below. The bottom-most matching pair with that footer is the
@@ -541,11 +544,12 @@ def _segment_after_last_prompt(text: str) -> Optional[str]:
         if index > marker_index:
             marker_index = index
             marker_len = len(marker)
-    # Codex also renders `» at column zero. Indented `»` is chrome
-    # ("» permission bypass on [shift+tab]"), so it must not qualify.
-    for match in re.finditer(r"^\u00bb", text, re.MULTILINE):
+    # Codex also renders » at column zero, usually behind SGR styling
+    # ("\x1b[0m\x1b[1m\x1b[38;2;188;140;247m»"). Indented » is chrome
+    # ("  » permission bypass on [shift+tab]"), so leading spaces still exclude it.
+    for match in CHEVRON_PROMPT_RE.finditer(text):
         if match.start() > marker_index:
-            marker_index, marker_len = match.start(), 1
+            marker_index, marker_len = match.start(), match.end() - match.start()
 
     if marker_index < 0:
         return None

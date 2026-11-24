@@ -443,3 +443,47 @@ def test_indented_chevron_chrome_is_not_a_prompt():
 
     assert state.kind == "occupied"
     assert state.text_after_prompt == "[lead\u2192dev] ping"
+
+
+CODEX_PROMPT_SGR = "\x1b[0m\x1b[1m\x1b[38;2;188;140;247m"
+
+
+def test_styled_codex_chevron_placeholder_behind_history_prompt_is_empty():
+    # The composer marker carries SGR codes; the dim U+203A line above is history.
+    screen = "\n".join([
+        "\x1b[2m\u203a 给openclaw/talkback发一条测试消息\x1b[0m",
+        "assistant output",
+        CODEX_PROMPT_SGR + "\u00bb \x1b[0m\x1b[38;2;154;160;166mAsk Codex to do anything\x1b[0m",
+        "  gpt-6.2-sol ultra · ~\\code\\vmsOps · Main [default]",
+        "  \u2190 for agents · ? for shortcuts",
+    ])
+
+    state = inspect_input(screen, "")
+
+    assert state.kind == "empty"
+    assert state.text_after_prompt == "Ask Codex to do anything"
+
+
+def test_styled_codex_chevron_real_draft_is_occupied():
+    screen = "\n".join([
+        "\x1b[2m\u203a 上一条已提交的消息\x1b[0m",
+        "assistant output",
+        CODEX_PROMPT_SGR + "\u00bb 请检查 pc-76 的状态",
+        "  gpt-6.2-sol ultra · ~\\code\\vmsOps · Main [default]",
+        "  \u2190 for agents · ? for shortcuts",
+    ])
+
+    state = inspect_input(screen, "")
+
+    assert state.kind == "occupied"
+    assert state.text_after_prompt == "请检查 pc-76 的状态"
+
+
+def test_styled_indented_chevron_chrome_is_still_not_a_prompt():
+    screen = "\n".join([
+        "\u276f [lead\u2192dev] ping",
+        "  " + CODEX_PROMPT_SGR + "\u00bb permission bypass on [shift+tab]",
+        "  ? for shortcuts · taste on",
+    ])
+
+    assert inspect_input(screen, "").text_after_prompt == "[lead\u2192dev] ping"
