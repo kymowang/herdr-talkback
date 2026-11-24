@@ -220,3 +220,35 @@ def test_update_restarts_verified_previous_runtime_even_if_uninstall_failed(tmp_
     job=store.update_job('remote','update_1')
     assert opened == [True] and gates == [True,False]
     assert job['state']=='failed' and 'rollback may be incomplete' in job['detail']
+
+
+def test_stale_update_job_does_not_block_a_new_request(tmp_path):
+    import time
+    import pytest
+    from herdr_talkback.peer_state import PeerConflict
+
+    state = TalkbackState(tmp_path / 'state.db', local_node_id='local')
+    state.init()
+    store = PeerStore(state)
+    assert store.start_update('remote', 'update_old')
+    assert store.claim_update()['request_id'] == 'update_old'
+    with state._connect() as db:
+        db.execute("update peer_update_jobs set updated_at=? where request_id='update_old'",
+                   (time.time() - 3600,))
+
+    assert store.start_update('remote', 'update_new') is True
+    assert store.update_job('remote', 'update_old')['state'] == 'failed'
+
+
+def test_fresh_update_job_still_rejects_a_second_request(tmp_path):
+    import pytest
+    from herdr_talkback.peer_state import PeerConflict
+
+    state = TalkbackState(tmp_path / 'state.db', local_node_id='local')
+    state.init()
+    store = PeerStore(state)
+    assert store.start_update('remote', 'update_one')
+    assert store.claim_update()['request_id'] == 'update_one'
+
+    with pytest.raises(PeerConflict):
+        store.start_update('remote', 'update_two')

@@ -13,6 +13,15 @@ PROTOCOL_VERSION = 1
 BODY_LIMIT = 64 * 1024
 REQUEST_LIMIT = 128 * 1024
 ID_RE = re.compile(r'^[A-Za-z0-9_-]{1,128}$')
+# A worker that dies mid-update leaves its job in a live state and used to
+# wedge every later request behind a 409. Jobs older than these limits are
+# treated as abandoned so the next request can proceed.
+UPDATE_STALE_AFTER = {
+    'queued': 6 * 60 * 60,
+    'preparing': 30 * 60,
+    'activating': 5 * 60,
+    'restarting': 10 * 60,
+}
 
 
 class PeerConflict(ValueError):
@@ -123,6 +132,13 @@ class PeerStore:
     def start_update(self, peer, request_id, service_pane_id=''):
         with self.state._connect() as db:
             db.execute('begin immediate')
+            now = time.time()
+            for state, limit in UPDATE_STALE_AFTER.items():
+                db.execute(
+                    "update peer_update_jobs set state='failed', detail='stale update job recovered', updated_at=? "
+                    "where state=? and updated_at < ?",
+                    (now, state, now - limit),
+                )
             current = db.execute("select 1 from peer_update_jobs where state in ('queued','preparing','activating','restarting') limit 1").fetchone()
             if current:
                 existing = db.execute('select 1 from peer_update_jobs where peer=? and request_id=?', (peer, request_id)).fetchone()
