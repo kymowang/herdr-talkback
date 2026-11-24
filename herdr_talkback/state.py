@@ -834,10 +834,49 @@ class TalkbackState:
     def tail_events(self, limit: int = 50) -> Iterable[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute("select * from events order by id desc limit ?", (limit,)).fetchall()
-        for row in reversed(rows):
-            item = dict(row)
-            item["payload"] = json.loads(item.pop("payload_json"))
-            yield item
+            items = []
+            for row in reversed(rows):
+                item = dict(row)
+                item["payload"] = json.loads(item.pop("payload_json"))
+                items.append(item)
+            self._add_message_endpoints(db, items)
+        return items
+
+    def _add_message_endpoints(self, db: sqlite3.Connection, items: list[dict[str, Any]]) -> None:
+        """Name the sender and target of each message event.
+
+        Events record only the message id, which leaves `tail` unable to say who
+        sent what to whom. The message row holds both endpoints, so fill them in
+        at read time; archived messages cover events whose delivery finished.
+        """
+        missing = {item["payload"].get("message_id") for item in items
+                   if isinstance(item.get("payload"), dict)
+                   and isinstance(item["payload"].get("message_id"), str)
+                   and "source" not in item["payload"]}
+        if not missing:
+            return
+        placeholders = ", ".join("?" for _ in missing)
+        found: dict[str, tuple[Any, ...]] = {}
+        for row in db.execute(
+                "select message_id, source, target from messages where message_id in ({0})".format(placeholders),
+                tuple(missing)):
+            found[row["message_id"]] = (row["source"], row["target"])
+        for row in db.execute(
+                "select message_id, message_json from message_archive where message_id in ({0})".format(placeholders),
+                tuple(missing)):
+            if row["message_id"] in found:
+                continue
+            archived = json.loads(row["message_json"])
+            found[row["message_id"]] = (archived.get("source"), archived.get("target"))
+        for item in items:
+            payload = item.get("payload")
+            if not isinstance(payload, dict) or payload.get("message_id") not in found:
+                continue
+            source, target = found[payload["message_id"]]
+            if source:
+                payload["source"] = source
+            if target:
+                payload["target"] = target
 
     def record_alert(self, kind: str, title: str, body: str, payload: dict[str, Any]) -> int:
         with self._connect() as db:

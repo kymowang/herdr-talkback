@@ -23,6 +23,13 @@ FOLDED_PASTE_MIN_PREFIX = 8
 FOLDING_AGENTS = ("cmd",)
 IMAGE_PLACEHOLDER_RE = re.compile(r"\[Image #\d+\]\s*")
 PROMPT_MARKERS = ("❯", "›")
+# agy (Antigravity CLI) uses no ❯/› marker: its composer is a full-width
+# horizontal rule, a `>` line holding the draft, and a matching rule, with the
+# CLI's footer hint below. The bottom-most matching pair with that footer is the
+# only such block on screen, so transcript `>` echoes and diffs are excluded.
+AGY_RULE_RE = re.compile(r"^\s*\u2500{20,}\s*$")
+AGY_PROMPT_RE = re.compile(r"^\s*>(?: (.*))?$")
+AGY_FOOTER_HINTS = ("? for shortcuts", "esc to cancel")
 PLACEHOLDER_TEXT = (
     "Type a message",
     "Press up to edit queued messages",
@@ -49,6 +56,9 @@ def inspect_input(
     opencode = _inspect_opencode(ansi_text, expected_message)
     if opencode is not None:
         return opencode
+    agy = _inspect_agy(ansi_text, expected_message, allow_transformed_residue)
+    if agy is not None:
+        return agy
     segment = _segment_after_last_prompt(ansi_text)
     if segment is None:
         if DISMISSIBLE_OVERLAY_TEXT in _strip_ansi(ansi_text):
@@ -147,12 +157,81 @@ TALKBACK_DRAFT_RE = re.compile(r"^\[\[?[^\[\]\r\n]*(?:->|\u2192)")
 SCROLLED_COMPOSER_RE = re.compile(r"\u2191[ \t]*$", re.MULTILINE)
 
 
+def _agy_composer_indexes(plain_lines):
+    """Return the composer's draft line indexes, or None if agy is not on screen.
+
+    agy (Antigravity CLI) has no ``❯``/``›`` prompt marker. Its composer is a
+    full-width rule, the ``>` line holding the draft, and a matching rule, with
+    the CLI's footer hint underneath (a status or log line may sit between
+    them). Scanning rule pairs bottom-up and requiring matching widths, draft
+    shaped interior lines and a chrome-only tail keeps transcript ``>`` echoes,
+    diffs and stale composers from being read as the live input box.
+    """
+    rules = [index for index, line in enumerate(plain_lines) if AGY_RULE_RE.match(line)]
+    for start, end in reversed(list(zip(rules, rules[1:]))):
+        if len(plain_lines[start].strip()) != len(plain_lines[end].strip()):
+            continue
+        interior = [index for index in range(start + 1, end) if plain_lines[index].strip()]
+        if not interior or not AGY_PROMPT_RE.match(plain_lines[interior[0]]):
+            continue
+        # Draft continuations are indented; anything else (diff markers, action
+        # lines, transcript text) means this rule pair is not the composer.
+        if any(not AGY_PROMPT_RE.match(plain_lines[index])
+               and not plain_lines[index][:1].isspace() for index in interior[1:]):
+            continue
+        tail = [line for line in plain_lines[end + 1:] if line.strip()]
+        if any(AGY_PROMPT_RE.match(line) for line in tail):
+            continue
+        if not any(hint in line for line in tail for hint in AGY_FOOTER_HINTS):
+            continue
+        return interior
+    return None
+
+
+def _agy_drafts(plain_lines, indexes):
+    """Return each composer line's draft text; continuation lines are indented."""
+    drafts = []
+    for index in indexes:
+        match = AGY_PROMPT_RE.match(plain_lines[index])
+        drafts.append(match.group(1) if match else plain_lines[index].strip())
+    return drafts
+
+
+def _inspect_agy(ansi_text, expected, allow_transformed_residue=False):
+    raw_lines = ansi_text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    plain_lines = [ANSI_RE.sub("", line) for line in raw_lines]
+    indexes = _agy_composer_indexes(plain_lines)
+    if indexes is None:
+        return None
+    drafts = _agy_drafts(plain_lines, indexes)
+    visible = "\n".join(part for part in drafts if part is not None).strip()
+    if not visible:
+        return InputState(kind="empty", text_after_prompt="")
+    if expected and _normalize_visible(expected) == _normalize_visible(visible):
+        return InputState(kind="residue", text_after_prompt=visible, contains_expected_message=True)
+    if allow_transformed_residue and expected and (
+            _is_expected_head_truncated_residue(visible, expected)
+            or _is_expected_soft_wrapped_residue(visible, expected)):
+        # agy truncates and soft-wraps a long draft, so the composer may show
+        # only a head or a wrapped rendering of our own message.
+        return InputState(kind="residue", text_after_prompt=visible, contains_expected_message=True)
+    return InputState(kind="occupied", text_after_prompt=visible)
+
+
+def _plain_lines(ansi_text: str) -> list:
+    return ANSI_RE.sub("", ansi_text).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+
 def composer_block(ansi_text: str) -> str:
     """Return the text under the active prompt, without the chrome below it.
 
     Status lines, separators and hints change constantly while an agent works;
     only this block is evidence of what is sitting in the input box.
     """
+    plain = _plain_lines(ansi_text)
+    indexes = _agy_composer_indexes(plain)
+    if indexes is not None:
+        return "\n".join(part.strip() for part in _agy_drafts(plain, indexes)).strip()
     segment = _segment_after_last_prompt(ansi_text)
     if segment is None:
         return ""
@@ -207,6 +286,12 @@ def sanitize_snapshot(ansi_text: str) -> str:
         # 方框已确认是 OpenCode 的输入框:占位与草稿都不进判断快照(与 Codex/Claude 口径一致)。
         # kind == "unknown" 说明布局没认准(多余尾行等),保持原样,不冒险删内容。
         return _sanitize_opencode(ansi_text)
+
+    agy = _inspect_agy(ansi_text, "")
+    if agy is not None and agy.kind in ("empty", "occupied"):
+        # agy 的输入框由两条等宽分隔线夹住;草稿同样不属于判断快照,
+        # 只删草稿行,保留分隔线与页脚,布局判断仍能认出输入框。
+        return _sanitize_agy(ansi_text)
 
     plain = ANSI_RE.sub("", ansi_text).replace("\r\n", "\n").replace("\r", "\n")
     lines = plain.split("\n")
@@ -277,6 +362,19 @@ def _sanitize_opencode(ansi_text: str) -> str:
     if not draft_indexes:
         return ansi_text
     return "\n".join(line for index, line in enumerate(lines) if index not in draft_indexes)
+
+
+def _sanitize_agy(ansi_text: str) -> str:
+    """Drop only agy's draft lines, keeping the rules and footer that frame them."""
+    lines = ansi_text.split("\n")
+    plain = [ANSI_RE.sub("", line) for line in lines]
+    indexes = _agy_composer_indexes(plain)
+    if indexes is None:
+        return ansi_text
+    return "\n".join(
+        "" if index in indexes else line
+        for index, line in enumerate(lines)
+    )
 
 
 def _cell_slice(text, start, end):
