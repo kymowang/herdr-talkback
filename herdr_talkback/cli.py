@@ -1144,6 +1144,11 @@ IN_FLIGHT_STATES = frozenset({
 })
 
 
+def _failure_detail(exc) -> str:
+    stderr = getattr(exc, "stderr", "") or ""
+    return stderr.strip() or str(exc)
+
+
 async def _wait_for(predicate, seconds: float, step: float = 0.25) -> bool:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -1187,9 +1192,10 @@ async def _restart_service(cfg, force: bool, *, run=None, running=None) -> int:
             }, ensure_ascii=False))
             return 1
         try:
-            run([herdr, "pane", "close", pane_id], check=True, timeout=30)
+            run([herdr, "pane", "close", pane_id], check=True, timeout=30,
+                capture_output=True, text=True)
         except (OSError, subprocess.SubprocessError) as exc:
-            print(json.dumps({"ok": False, "error": f"could not close the service pane {pane_id}: {exc}"}, ensure_ascii=False))
+            print(json.dumps({"ok": False, "error": f"could not close the service pane {pane_id}: {_failure_detail(exc)}"}, ensure_ascii=False))
             return 1
         if not await _wait_for(lambda: not running(socket_path), 20):
             print(json.dumps({
@@ -1201,9 +1207,9 @@ async def _restart_service(cfg, force: bool, *, run=None, running=None) -> int:
     try:
         run([herdr, "plugin", "pane", "open", "--plugin", "herdr-talkback",
              "--entrypoint", "service", "--placement", "tab", "--no-focus"],
-            check=True, timeout=30)
+            check=True, timeout=30, capture_output=True, text=True)
     except (OSError, subprocess.SubprocessError) as exc:
-        print(json.dumps({"ok": False, "error": f"could not open the service pane: {exc}"}, ensure_ascii=False))
+        print(json.dumps({"ok": False, "error": f"could not open the service pane: {_failure_detail(exc)}"}, ensure_ascii=False))
         return 1
     if not await _wait_for(lambda: running(socket_path), 30):
         print(json.dumps({"ok": False, "error": "the service pane did not start; check 'herdr plugin log list --plugin herdr-talkback'"}, ensure_ascii=False))
