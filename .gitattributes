@@ -1,0 +1,4 @@
+# Git runs hooks through its own shell, which rejects CRLF line endings in
+# shell scripts. Keep everything under .githooks and tools as POSIX text.
+.githooks/** text eol=lf
+tools/*.py text eol=lf

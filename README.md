@@ -397,3 +397,18 @@ python3 -m pip wheel --no-deps .
 ```
 
 插件的常驻服务由 Herdr pane entrypoint 承载。不要在 systemd 中同时启动旧 Agent Hub 和 Talkback。
+
+### 版本号
+
+版本号同时声明在 `pyproject.toml`、`herdr-plugin.toml` 和 `herdr_talkback/__init__.py`，三处必须一致。启用仓库自带的钩子后，每次提交都会自动递增补丁号并随提交一起推送：
+
+```bash
+git config core.hooksPath .githooks
+```
+
+`tools/bump_version.py` 也可以单独使用：默认递增补丁号，`--sync` 以最新声明为准同步三处（手工只改了一个文件时用），`--dry-run` 只打印不写入。
+
+钩子放在 `pre-commit` 而非 `pre-push`：git 在调用 `pre-push` 之前就已固定待推的 ref，钩子里新建的提交无法随同一次 push 发出。
+
+只提交版本文件时不会递增，而是按手工改动的值同步其余声明；空提交不触发任何改动。
+
