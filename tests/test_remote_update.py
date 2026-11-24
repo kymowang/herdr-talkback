@@ -252,3 +252,14 @@ def test_fresh_update_job_still_rejects_a_second_request(tmp_path):
 
     with pytest.raises(PeerConflict):
         store.start_update('remote', 'update_two')
+
+
+def test_run_surfaces_the_tail_of_a_failed_command():
+    import sys
+    import pytest
+
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        remote_update._run([sys.executable, '-c',
+                            "import sys; print('clone stalled', file=sys.stderr); sys.exit(2)"])
+
+    assert 'clone stalled' in (failure.value.stderr or '')

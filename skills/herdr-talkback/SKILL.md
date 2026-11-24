@@ -138,6 +138,8 @@ herdr-talkback peer update-status pc-54 <request-id>
 
 `peer update` builds and installs the Python package from the fixed GitHub repository, backs up the previous installation, refuses activation while messages are in progress, and restarts the remote Herdr-owned service. It does not modify any remote Git checkout, user configuration or credentials. The Herdr plugin manifest registration and installed skill are not updated by this command; update those separately if needed. Query update status and report failures or uncertain results; a remote target must already support this protocol.
 
+When the remote build fails, the status detail now carries the tail of the failing command. A `git clone` that stalls under an HTTP proxy is the usual cause: the clone waits inside `--filter=blob:none`. On that host, exclude GitHub from the proxy (`NO_PROXY=github.com,codeload.github.com` in the service environment) or install a locally built wheel with `pip install --no-deps --force-reinstall <wheel>` followed by `herdr-talkback restart`.
+
 ## Logical monitoring
 
 ```text

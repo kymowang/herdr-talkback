@@ -28,8 +28,16 @@ def _set_status(database, peer, request_id, state, detail=''):
 
 
 def _run(args, timeout=600):
-    return subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                          stderr=subprocess.DEVNULL, check=True, timeout=timeout)
+    """Run a helper command, keeping only the tail of its output for failures."""
+    try:
+        return subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, check=True, timeout=timeout,
+                              encoding='utf-8', errors='replace')
+    except subprocess.CalledProcessError as exc:
+        lines = (exc.stderr or exc.stdout or '').strip().splitlines()
+        raise subprocess.CalledProcessError(exc.returncode, exc.cmd,
+                                            output=exc.stdout,
+                                            stderr='\n'.join(lines[-8:])) from exc
 
 
 def _open_service(herdr, update_id=None, maintenance=False):
@@ -136,7 +144,11 @@ def run_update(database, daemon_path, peer, request_id, pane_id, herdr):
             try:
                 _run([sys.executable, '-m', 'pip', 'wheel', '--no-deps', '--wheel-dir', str(wheel_dir), SOURCE])
             except (subprocess.SubprocessError, OSError) as exc:
-                raise RuntimeError('GitHub wheel build failed; check Git, pip, and network access') from exc
+                message = 'GitHub wheel build failed; check Git, pip, and network access'
+                detail = (getattr(exc, 'stderr', '') or '').strip().splitlines()
+                if detail:
+                    message += ': ' + detail[-1][:300]
+                raise RuntimeError(message) from exc
             wheels = list(wheel_dir.glob('herdr_talkback-*.whl'))
             if len(wheels) != 1:
                 raise RuntimeError('GitHub did not produce exactly one Talkback wheel')
