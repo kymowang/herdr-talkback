@@ -1318,3 +1318,28 @@ def test_delivery_skips_residue_flush_when_recipient_already_acknowledged(tmp_pa
         assert client.requests.count(("pane.send_input", {"pane_id": "p-back", "text": "", "keys": ["enter"]})) == 0
 
     asyncio.run(scenario())
+
+
+def test_delivery_proceeds_when_agy_composer_shows_its_placeholder(tmp_path):
+    async def scenario():
+        rule = "\u2500" * 60
+        agy_empty = "\n".join([
+            rule,
+            "> Auto mode: edits & safe commands auto-approved (shift+tab to cycle)",
+            rule,
+            "? for shortcuts",
+        ])
+        client = FakeClient([agy_empty, EMPTY_PROMPT])
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+
+        result = await DeliveryService(client, FakeRegistry(), state).deliver(
+            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+
+        assert result.delivered
+        sends = [params for method, params in client.requests if method == "pane.send_input"]
+        assert len(sends) == 1
+        assert sends[0]["pane_id"] == "p-back"
+        assert sends[0]["keys"] == ["enter"]
+        assert sends[0]["text"].startswith(MESSAGE_TEXT)
+    asyncio.run(scenario())

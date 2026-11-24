@@ -31,7 +31,7 @@ def repo(tmp_path, monkeypatch):
     ):
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8", newline="\n")
+        path.write_bytes(content.encode("utf-8"))
     run("add", "-A")
     run("commit", "--quiet", "-m", "init")
 
@@ -41,7 +41,7 @@ def repo(tmp_path, monkeypatch):
 
 
 def write(path: Path, text: str) -> None:
-    path.write_text(text, encoding="utf-8", newline="\n")
+    path.write_bytes(text.encode("utf-8"))
 
 
 def committed_version(repo, run) -> str:

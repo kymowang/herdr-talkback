@@ -30,6 +30,11 @@ PROMPT_MARKERS = ("❯", "›")
 AGY_RULE_RE = re.compile(r"^\s*\u2500{20,}\s*$")
 AGY_PROMPT_RE = re.compile(r"^\s*>(?: (.*))?$")
 AGY_FOOTER_HINTS = ("? for shortcuts", "esc to cancel")
+# agy paints its prompt hint inside the composer instead of leaving it blank.
+# Those hints are not drafts: treating them as input blocks every delivery.
+AGY_PLACEHOLDERS = (
+    "Auto mode: edits & safe commands auto-approved (shift+tab to cycle)",
+)
 PLACEHOLDER_TEXT = (
     "Type a message",
     "Press up to edit queued messages",
@@ -188,6 +193,11 @@ def _agy_composer_indexes(plain_lines):
     return None
 
 
+def _is_agy_placeholder(text: str) -> bool:
+    normalized = _normalize_visible(text)
+    return any(normalized == _normalize_visible(hint) for hint in AGY_PLACEHOLDERS)
+
+
 def _agy_drafts(plain_lines, indexes):
     """Return each composer line's draft text; continuation lines are indented."""
     drafts = []
@@ -205,7 +215,7 @@ def _inspect_agy(ansi_text, expected, allow_transformed_residue=False):
         return None
     drafts = _agy_drafts(plain_lines, indexes)
     visible = "\n".join(part for part in drafts if part is not None).strip()
-    if not visible:
+    if not visible or _is_agy_placeholder(visible):
         return InputState(kind="empty", text_after_prompt="")
     if expected and _normalize_visible(expected) == _normalize_visible(visible):
         return InputState(kind="residue", text_after_prompt=visible, contains_expected_message=True)
@@ -231,7 +241,8 @@ def composer_block(ansi_text: str) -> str:
     plain = _plain_lines(ansi_text)
     indexes = _agy_composer_indexes(plain)
     if indexes is not None:
-        return "\n".join(part.strip() for part in _agy_drafts(plain, indexes)).strip()
+        draft = "\n".join(part.strip() for part in _agy_drafts(plain, indexes)).strip()
+        return "" if _is_agy_placeholder(draft) else draft
     segment = _segment_after_last_prompt(ansi_text)
     if segment is None:
         return ""

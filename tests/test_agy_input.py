@@ -132,3 +132,40 @@ def test_sanitize_snapshot_leaves_unknown_agy_layout_untouched():
     text = "\n".join([RULE, "> draft", "", "no closing rule or footer"])
 
     assert sanitize_snapshot(text) == text
+
+
+AGY_AUTO_PLACEHOLDER = "Auto mode: edits & safe commands auto-approved (shift+tab to cycle)"
+AGY_FOOTER = "? for shortcuts" + " " * 40 + "auto · Gemini 4 Neon · high"
+
+
+def test_agy_auto_mode_placeholder_is_empty_not_occupied():
+    # Antigravity paints the prompt hint inside the composer; it is not a draft.
+    view = screen(AGY_AUTO_PLACEHOLDER, footer=AGY_FOOTER)
+
+    state = inspect_input(view, "")
+
+    assert state.kind == "empty"
+    assert state.text_after_prompt == ""
+    assert composer_block(view) == ""
+
+
+def test_agy_auto_mode_placeholder_with_ansi_colors_is_empty():
+    composer = ("\x1b[0m\x1b[38;2;138;180;248m>\x1b[0m \x1b[0m\x1b[38;2;154;160;166m"
+                + AGY_AUTO_PLACEHOLDER + "\x1b[0m")
+    view = "\n".join([
+        "\x1b[0m\x1b[38;2;60;64;67m" + RULE + "\x1b[0m",
+        composer,
+        "\x1b[0m\x1b[38;2;60;64;67m" + RULE + "\x1b[0m",
+        "\x1b[0m\x1b[38;2;154;160;166m" + AGY_FOOTER + "\x1b[0m",
+    ])
+
+    assert inspect_input(view, "").kind == "empty"
+
+
+def test_agy_real_draft_still_occupied_next_to_placeholder_screen():
+    view = screen("real text typed by the user", footer=AGY_FOOTER)
+
+    state = inspect_input(view, "")
+
+    assert state.kind == "occupied"
+    assert state.text_after_prompt == "real text typed by the user"
