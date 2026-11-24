@@ -202,7 +202,29 @@ def _agy_composer_indexes(plain_lines):
         if not any(hint in line for line in tail for hint in AGY_FOOTER_HINTS):
             continue
         return interior
-    return _agy_tall_composer_indexes(plain_lines, rules)
+    return (_agy_tall_composer_indexes(plain_lines, rules)
+            or _agy_fullscreen_composer_indexes(plain_lines, rules))
+
+
+def _agy_fullscreen_composer_indexes(plain_lines, rules):
+    """Recover a draft taller than the whole viewport.
+
+    Such a composer is drawn edge to edge: no rule and no footer are visible,
+    and its first visible line carries the prompt marker with the right-aligned
+    up arrow. Requiring that marker plus the arrow keeps transcript echoes out.
+    """
+    if rules:
+        return None
+    for index, line in enumerate(plain_lines):
+        if not AGY_SCROLL_MARKER_RE.search(line):
+            continue
+        if not re.match(r"^[\u203a>\u276f]", line):
+            continue
+        interior = [position for position in range(index, len(plain_lines))
+                    if plain_lines[position].strip()]
+        if len(interior) >= 2:
+            return interior
+    return None
 
 
 def _agy_tall_composer_indexes(plain_lines, rules):

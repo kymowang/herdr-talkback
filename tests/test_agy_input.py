@@ -241,3 +241,26 @@ def test_command_code_screen_is_not_read_as_a_tall_agy_composer():
 
     assert state.kind == "occupied"
     assert state.text_after_prompt == "[lead→dev] ping"
+
+
+def test_agy_draft_taller_than_viewport_is_occupied():
+    # Real capture from pc-76/kb (w1:p1): composer fills the viewport, no rules
+    # or footer are visible, first line is `›` with a right-aligned up arrow.
+    from pathlib import Path
+
+    raw = Path("tests/fixtures/agy_tall_kb.ansi").read_text(encoding="utf-8")
+
+    state = inspect_input(raw, "")
+
+    assert state.kind == "occupied"
+    assert "COMMENT ON TABLE" in state.text_after_prompt
+    assert "\u2191" in state.text_after_prompt
+
+
+def test_agy_draft_taller_than_viewport_is_drainable():
+    from pathlib import Path
+    from herdr_talkback.input_parser import is_talkback_draft
+
+    raw = Path("tests/fixtures/agy_tall_kb.ansi").read_text(encoding="utf-8")
+
+    assert is_talkback_draft(composer_block(raw))

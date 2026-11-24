@@ -1,0 +1,50 @@
+[0m[48;2;50;50;50m     from_sequence、to_sequence、contract_version、source_delivery_versions、row_count、table_stats jsonb、archive_sha256、package_sha256、package_size_bytes、package_file_path、     [0m
+[0m[48;2;50;50;50m     built_by、built_host、remark、created_at），支持按 (source_id, package_type) 索引续接下一包起始水位。2. 隔离与契约边界：   - 不建指向 source_import_* / vuln_source_* 的外键，避  [0m
+[0m[48;2;50;50;50m     免写入制作历史时对同步器表产生锁竞争；   - 制包器对所有原有同步供数表仍严格只读（REPEATABLE READ READ ONLY），仅在产物验真签名落盘后写本历史表；                                  [0m
+[0m[48;2;50;50;50m  [0m[38;2;148;226;213m[48;2;50;50;50m    • [0m[48;2;50;50;50m升级包内 manifest.json 1.4.0 契约字段不变（manifest.package_type 仍固定为 DELTA）。                                                                                            [0m
+[0m[48;2;50;50;50m                                                                                                                                                                                       [0m
+[0m[48;2;50;50;50m  [0m[38;5;12m[48;2;50;50;50m2. [0m[48;2;50;50;50m请 kb 侧知悉并在后续维护 builder DDL / 重建脚本时将该表纳入（如需我方调整表名、列定义或补齐到你的 DDL 仓，请直接回复 agy）。                                                      [0m
+[0m[48;2;50;50;50m                                                                                                                                                                                       [0m
+ 
+[0m[2m• [0m已知悉 [0m[38;2;166;227;161mpackage_builder.vuln_package_build_history[0m 的用途和边界。后续维护 builder DDL 或重建脚本时，会将该表及其索引纳入核对，并保持原有供数表只读与 manifest 1.4.0 契约。
+ 
+[0m[2m  Worked for 42s • 17:12                                                                                                                                                               [0m
+ 
+[0m[2m[3m  ↳ [0m[1m[2m[3mRecap: [0m[2m[3m漏洞库迁移结构核查发现样例数据污染、旧索引谓词及保留表注释回退，部分迁移被遗漏；目标 catalog 尚未通过隔离重放验证，保数据升级也未验证。制包器已按单来源契约完成修改，60 项  [0m
+[0m[2m[3m           单测通过；builder 已新增制包历史表，后续维护 DDL 时需纳入。                                                                                                                 [0m
+[0m[2m[3m           [0m[1m[2m[3m[38;2;99;168;248mNext: [0m[2m[3m在物理隔离的 PG15 空库重放目标提交的完整迁移链，并据此核对现场结构差异。                                                                                              [0m
+ 
+ 
+[0m[48;2;41;41;41m                                                                                                                                                                                       [0m
+[0m[1m[48;2;41;41;41m›[0m[48;2;41;41;41m                                                                                                                                                                                     [0m[2m[48;2;41;41;41m↑[0m
+[0m[48;2;41;41;41m  COMMENT ON TABLE  package_builder.vuln_package_build_history IS '漏洞升级包制作历史；仅在产物验真签名落盘后写入，供按升级包类型续接下一包起始水位及发布对账';COMMENT ON COLUMN       [0m
+[0m[48;2;41;41;41m  package_builder.vuln_package_build_history.id IS '自增主键';COMMENT ON COLUMN package_builder.vuln_package_build_history.package_no IS '升级包编号（全局唯一，对应 tar 根目录 vuln-  [0m
+[0m[48;2;41;41;41m  upgrade-<package_no>）';COMMENT ON COLUMN package_builder.vuln_package_build_history.package_type IS '升级包发包类型：day（日包）/ week（周包）/ month（月包）/ custom（定制补包）'; [0m
+[0m[48;2;41;41;41m                                                                                                                                                                                       [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.package_format IS '包形态：DELTA（增量）或 FULL（全量），与 manifest.package_type 对应';COMMENT ON COLUMN               [0m
+[0m[48;2;41;41;41m  package_builder.vuln_package_build_history.source_id IS '来源标识（对齐 source_import_state.source_id）';                                                                            [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.source_fingerprint IS '来源指纹 SHA256（对齐 source_import_state.source_fingerprint）';                                 [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.from_sequence IS '本包起始水位（不含，对应命令行 --from-seq）';                                                         [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.to_sequence IS '本包截止水位（含，对应命令行 --to-seq）';                                                               [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.contract_version IS '知识库升级契约版本（如 1.4.0）';                                                                   [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.source_delivery_versions IS '窗口内来源交付版本清单（如 {1.0.3}）';                                                     [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.row_count IS '包内 31 表总行数';                                                                                        [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.table_stats IS '31 表逐表行数/活跃/删除统计（与 manifest.table_stats 一致）';                                           [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.archive_sha256 IS '包内 data/pg-archive.dump 的 SHA256';                                                                [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.package_sha256 IS '最终 .tar 升级包文件的 SHA256';                                                                      [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.package_size_bytes IS '最终 .tar 升级包文件大小（字节）';                                                               [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.package_file_path IS '制包落盘路径';                                                                                    [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.built_by IS '执行制包的系统用户或操作人标识';                                                                           [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.built_host IS '执行制包的主机名';                                                                                       [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.remark IS '可选备注（如 custom 定制包的客户或工单说明）';                                                               [0m
+[0m[48;2;41;41;41m  COMMENT ON COLUMN package_builder.vuln_package_build_history.created_at IS '制包完成并落库时间';                                                                                     [0m
+[0m[48;2;41;41;41m  ```                                                                                                                                                                                  [0m
+[0m[48;2;41;41;41m  [openclaw/agy->pc-76/kb] 补充两个关键问题请 kb 确认（关于刚在 110.102:5433/vulnerability_builder 新增的 package_builder.vuln_package_build_history）：                               [0m
+[0m[48;2;41;41;41m                                                                                                                                                                                       [0m
+[0m[48;2;41;41;41m  1. builder 原有 package_builder 建表语句（权威 DDL）在哪个仓库/路径下？我们需要把这张新表同步归档到同一权威位置，避免后续重建 builder 丢表。                                         [0m
+[0m[48;2;41;41;41m  2. 在 package_builder schema 下新增这张表（schema 内表数量从 9 张变为 10 张），是否会影响现有的漏洞同步器、全量导入、activation、对账/核验脚本或定时任务（特别是是否存在按           [0m
+[0m[48;2;41;41;41m  package_builder 表数量或表清单做严格断言的地方）？如果有影响，请告知需要调整哪边，或者是否应该把该表挪到独立 schema（例如 package_history）以彻底隔离。                              [0m
+[0m[48;2;41;41;41m                                                                                                                                                                                       [0m
+[0m[48;2;41;41;41m  确认结果请回复 agy，感谢！                                                                                                                                                           [0m
+[0m[48;2;41;41;41m                                                                                                                                                                                       [0m
+[0m[48;2;41;41;41m                                                                                                                                                                                       [0m
