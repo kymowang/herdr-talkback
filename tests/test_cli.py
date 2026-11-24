@@ -272,6 +272,35 @@ async def _queue_reads_active_messages_without_herdr_socket(monkeypatch, tmp_pat
     assert "msg_failed" not in output
 
 
+def test_message_list_reads_history_with_state_filter(monkeypatch, tmp_path, capsys):
+    asyncio.run(_message_list_reads_history_with_state_filter(monkeypatch, tmp_path, capsys))
+
+
+async def _message_list_reads_history_with_state_filter(monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv("HERDR_SOCKET_PATH", raising=False)
+    state_path = tmp_path / "state.db"
+    state = TalkbackState(state_path)
+    state.init()
+    state.create_message("msg_ok", "lead", "dev-back", "p-back", "[lead→dev-back] done")
+    state.update_message_state("msg_ok", MessageState.DELIVERED, "input cleared")
+    state.create_message("msg_bad", "lead", "runner", "p-runner", "[lead→runner] stuck")
+    state.update_message_state("msg_bad", MessageState.FAILED, "target input occupied")
+    config_file = tmp_path / "herdr-talkback.toml"
+    config_file.write_text(f'state_path = "{state_path.as_posix()}"\n', encoding="utf-8")
+
+    args = build_parser().parse_args(
+        ["--config", str(config_file), "message", "list", "--state", "delivered"])
+    assert await cli._main_async(args) == 0
+    output = capsys.readouterr().out
+    assert '"message_id": "msg_ok"' in output
+    assert "msg_bad" not in output
+
+    args = build_parser().parse_args(["--config", str(config_file), "message", "list", "--json"])
+    assert await cli._main_async(args) == 0
+    output = capsys.readouterr().out
+    assert '"msg_ok"' in output and '"msg_bad"' in output
+
+
 def test_alerts_reads_open_alerts_without_herdr_socket(monkeypatch, tmp_path, capsys):
     asyncio.run(_alerts_reads_open_alerts_without_herdr_socket(monkeypatch, tmp_path, capsys))
 

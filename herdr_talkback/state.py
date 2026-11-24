@@ -642,11 +642,20 @@ class TalkbackState:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def list_messages(self) -> list[dict[str, Any]]:
+    def list_messages(
+        self, limit: Optional[int] = None, state: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        query = "select * from messages"
+        params: list[Any] = []
+        if state is not None:
+            query += " where state = ?"
+            params.append(state)
+        query += " order by updated_at desc, message_id desc"
+        if limit is not None:
+            query += " limit ?"
+            params.append(int(limit))
         with self._connect() as db:
-            rows = db.execute(
-                "select * from messages order by updated_at desc, message_id desc"
-            ).fetchall()
+            rows = db.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
     def archive_messages_older_than(

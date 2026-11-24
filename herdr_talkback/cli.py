@@ -93,18 +93,22 @@ def build_parser() -> argparse.ArgumentParser:
     peer_update_status.add_argument('request_id')
     peers = sub.add_parser('peers', help='Inspect configured network peers')
     peers_sub = peers.add_subparsers(dest='peers_command', required=True)
-    peers_list = peers_sub.add_parser('list')
+    peers_list = peers_sub.add_parser('list', help='List configured peers')
     peers_list.add_argument('--json', action='store_true')
-    check_peer = peers_sub.add_parser('check')
+    check_peer = peers_sub.add_parser('check', help='Check a peer connection, credentials and version')
     check_peer.add_argument('node_id')
     check_peer.add_argument('--json', action='store_true')
     message = sub.add_parser('message', help='Inspect durable message delivery')
     message_sub = message.add_subparsers(dest='message_command', required=True)
-    message_status = message_sub.add_parser('status')
+    message_list = message_sub.add_parser('list', help='List stored messages, newest first')
+    message_list.add_argument('--limit', type=int, default=20, help='Number of messages to show')
+    message_list.add_argument('--state', help='Only messages in this state, e.g. delivered')
+    message_list.add_argument('--json', action='store_true', help='Print one JSON array')
+    message_status = message_sub.add_parser('status', help='Show one message and its peer progress')
     message_status.add_argument('message_id')
     message_status.add_argument('--json', action='store_true')
 
-    sub.add_parser("panes")
+    sub.add_parser("panes", help="List registered pane names (local and remote)")
     pane = sub.add_parser("pane", help="Inspect and name Herdr panes")
     pane_sub = pane.add_subparsers(dest="pane_command", required=True)
     pane_sub.add_parser("list", help="List all panes as a table")
@@ -126,12 +130,12 @@ def build_parser() -> argparse.ArgumentParser:
     target.add_argument("pane_id", nargs="?")
     target.add_argument("--all", action="store_true", help="Process every pane in this Herdr session")
     name_from_tab.add_argument("--force", action="store_true", help="Overwrite existing pane names")
-    status = sub.add_parser("status")
+    status = sub.add_parser("status", help="Show one pane's agent status and input state")
     status.add_argument("target")
     status.add_argument("--json", action="store_true")
 
-    sub.add_parser("queue")
-    alerts = sub.add_parser("alerts")
+    sub.add_parser("queue", help="List unfinished (non-terminal) messages")
+    alerts = sub.add_parser("alerts", help="Show or clear Talkback alerts")
     alerts.add_argument("--limit", type=int, default=20)
     alerts.add_argument("-f", "--follow", action="store_true")
     alerts.add_argument("--poll-interval", type=float, default=1.0)
@@ -167,20 +171,20 @@ def build_parser() -> argparse.ArgumentParser:
     whoami.add_argument('host')
     whoami.add_argument('target')
 
-    exec_cmd = sub.add_parser("exec")
+    exec_cmd = sub.add_parser("exec", help="Run a command in several panes at once")
     exec_cmd.add_argument("targets")
     exec_cmd.add_argument("exec_command", nargs="+", action=JoinMessageAction)
 
-    serve = sub.add_parser("serve")
+    serve = sub.add_parser("serve", help="Run the Talkback service")
     serve.add_argument("--dry-run", action="store_true")
 
-    tail = sub.add_parser("tail")
+    tail = sub.add_parser("tail", help="Show recent daemon events")
     tail.add_argument("--limit", type=int, default=50)
 
-    retry = sub.add_parser("retry")
+    retry = sub.add_parser("retry", help="Requeue a failed message as a new delivery")
     retry.add_argument("message_id")
 
-    input_cmd = sub.add_parser("input")
+    input_cmd = sub.add_parser("input", help="Read one pane's input state")
     input_cmd.add_argument("target")
     input_cmd.add_argument("--expected", default="")
     input_cmd.add_argument("--lines", type=int, default=100)
@@ -436,6 +440,16 @@ async def _main_async(args) -> int:
     if args.command == 'message':
         from .peer_state import PeerStore
         state = _load_read_state(args.config)
+        if args.message_command == 'list':
+            rows = state.list_messages(limit=args.limit, state=args.state)
+            if args.json:
+                print(json.dumps(rows, ensure_ascii=False))
+            else:
+                for row in rows:
+                    print(json.dumps({key: row[key] for key in (
+                        'message_id', 'source_endpoint', 'target_endpoint',
+                        'state', 'reason', 'attempts')}, ensure_ascii=False))
+            return 0
         try:
             row = state.get_message(args.message_id)
         except KeyError:
