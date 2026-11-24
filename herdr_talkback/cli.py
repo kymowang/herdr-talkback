@@ -104,6 +104,9 @@ def build_parser() -> argparse.ArgumentParser:
     message_list.add_argument('--limit', type=int, default=20, help='Number of messages to show')
     message_list.add_argument('--state', help='Only messages in this state, e.g. delivered')
     message_list.add_argument('--json', action='store_true', help='Print one JSON array')
+    message_cancel = message_sub.add_parser(
+        'cancel', help='Stop dispatching a non-terminal message and mark it failed')
+    message_cancel.add_argument('message_id')
     message_status = message_sub.add_parser('status', help='Show one message and its peer progress')
     message_status.add_argument('message_id')
     message_status.add_argument('--json', action='store_true')
@@ -440,6 +443,14 @@ async def _main_async(args) -> int:
     if args.command == 'message':
         from .peer_state import PeerStore
         state = _load_read_state(args.config)
+        if args.message_command == 'cancel':
+            canceled = state.cancel_message(args.message_id)
+            print(json.dumps({
+                'ok': canceled,
+                'message_id': args.message_id,
+                'error': None if canceled else 'message not found or already terminal',
+            }, ensure_ascii=False))
+            return 0 if canceled else 1
         if args.message_command == 'list':
             rows = state.list_messages(limit=args.limit, state=args.state)
             if args.json:

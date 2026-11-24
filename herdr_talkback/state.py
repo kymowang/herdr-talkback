@@ -642,6 +642,22 @@ class TalkbackState:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def cancel_message(self, message_id: str, reason: str = "canceled by operator") -> bool:
+        """Stop dispatching a non-terminal message and mark it failed."""
+        terminal = (
+            MessageState.DELIVERED.value,
+            MessageState.FAILED.value,
+            CoreMessageState.DELIVERY_UNKNOWN.value,
+        )
+        placeholders = ", ".join("?" for _ in terminal)
+        with self._connect() as db:
+            cursor = db.execute(
+                "update messages set state = ?, reason = ?, updated_at = ? "
+                "where message_id = ? and state not in ({0})".format(placeholders),
+                (MessageState.FAILED.value, reason, time.time(), message_id, *terminal),
+            )
+        return cursor.rowcount == 1
+
     def list_messages(
         self, limit: Optional[int] = None, state: Optional[str] = None
     ) -> list[dict[str, Any]]:

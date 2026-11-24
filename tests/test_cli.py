@@ -301,6 +301,34 @@ async def _message_list_reads_history_with_state_filter(monkeypatch, tmp_path, c
     assert '"msg_ok"' in output and '"msg_bad"' in output
 
 
+def test_message_cancel_stops_a_nonterminal_message_only(monkeypatch, tmp_path, capsys):
+    asyncio.run(_message_cancel_stops_a_nonterminal_message_only(monkeypatch, tmp_path, capsys))
+
+
+async def _message_cancel_stops_a_nonterminal_message_only(monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv("HERDR_SOCKET_PATH", raising=False)
+    state_path = tmp_path / "state.db"
+    state = TalkbackState(state_path)
+    state.init()
+    state.enqueue_message(CoreMessage(
+        message_id="msg_wait", source_endpoint="openclaw/lead",
+        target_endpoint="linux-main/codex2", body="hello", raw_text="[lead→codex2] hello",
+        state=CoreMessageState.WAITING_ENDPOINT, conversation_id="msg_wait"))
+    state.create_message("msg_done", "lead", "dev-back", "p-back", "[lead→dev-back] done")
+    state.update_message_state("msg_done", MessageState.DELIVERED, "input cleared")
+    config_file = tmp_path / "herdr-talkback.toml"
+    config_file.write_text(f'state_path = "{state_path.as_posix()}"\n', encoding="utf-8")
+
+    args = build_parser().parse_args(["--config", str(config_file), "message", "cancel", "msg_wait"])
+    assert await cli._main_async(args) == 0
+    assert state.get_message("msg_wait")["state"] == "failed"
+    assert state.get_message("msg_wait")["reason"] == "canceled by operator"
+
+    args = build_parser().parse_args(["--config", str(config_file), "message", "cancel", "msg_done"])
+    assert await cli._main_async(args) == 1
+    assert state.get_message("msg_done")["state"] == "delivered"
+
+
 def test_alerts_reads_open_alerts_without_herdr_socket(monkeypatch, tmp_path, capsys):
     asyncio.run(_alerts_reads_open_alerts_without_herdr_socket(monkeypatch, tmp_path, capsys))
 
