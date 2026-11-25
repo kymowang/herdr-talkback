@@ -55,6 +55,32 @@ def test_agy_cancellable_footer_reads():
     assert inspect_input(screen("draft", footer="esc to cancel   Gemini 4 Neon"), "").kind == "occupied"
 
 
+def test_agy_queued_draft_footer_reads():
+    # While a turn runs, agy replaces its footer with the queued-draft hint.
+    # Not recognizing it made the composer unreadable exactly when a message
+    # had to be queued behind the running turn.
+    view = "\n".join([
+        RULE,
+        ">",
+        RULE,
+        "  \u25cf Agent(self: dev) \xb7 Working \xb7 27m51s",
+        RULE,
+        "  Press up to edit queued messages",
+    ])
+
+    state = inspect_input(view, "")
+
+    assert state.kind == "empty"
+    assert composer_block(view) == ""
+
+
+def test_agy_composer_block_handles_bare_prompt_line():
+    # A bare `>` has no captured draft; composer_block must not crash on it.
+    view = "\n".join(["assistant output", RULE, ">", RULE, "? for shortcuts"])
+
+    assert composer_block(view) == ""
+
+
 def test_agy_transcript_echo_without_composer_is_unknown():
     view = "\n".join([RULE, "> earlier user message", "", "assistant output", "more output"])
 

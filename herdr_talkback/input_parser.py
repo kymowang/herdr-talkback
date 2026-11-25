@@ -32,7 +32,16 @@ CHEVRON_PROMPT_RE = re.compile(r"^(?:\x1b\[[0-9;?]*[A-Za-z])*\u00bb", re.MULTILI
 # only such block on screen, so transcript `>` echoes and diffs are excluded.
 AGY_RULE_RE = re.compile(r"^\s*\u2500{20,}\s*$")
 AGY_PROMPT_RE = re.compile(r"^\s*>(?: (.*))?$")
-AGY_FOOTER_HINTS = ("? for shortcuts", "esc to cancel")
+# The footer hint identifies the live composer, but agy rewrites it as its state
+# changes: `? for shortcuts` when idle, `esc to cancel` while working, and
+# `Press up to edit queued messages` once a draft is waiting behind a running
+# turn. Missing one of them makes the composer unrecognizable exactly when a
+# message has to be queued, so every observed variant belongs here.
+AGY_FOOTER_HINTS = (
+    "? for shortcuts",
+    "esc to cancel",
+    "Press up to edit queued messages",
+)
 # A draft longer than the composer viewport scrolls: the `>` line goes out of
 # sight and the CLI marks the hidden part with an up arrow on the first line.
 AGY_SCROLL_MARKER_RE = re.compile(r"\u2191\s*$")
@@ -312,7 +321,7 @@ def composer_block(ansi_text: str) -> str:
     plain = _plain_lines(ansi_text)
     indexes = _agy_composer_indexes(plain)
     if indexes is not None:
-        draft = "\n".join(part.strip() for part in _agy_drafts(plain, indexes)).strip()
+        draft = "\n".join(part or "" for part in _agy_drafts(plain, indexes)).strip()
         return "" if _is_agy_placeholder(draft) else draft
     segment = _segment_after_last_prompt(ansi_text)
     if segment is None:
