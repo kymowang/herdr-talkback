@@ -736,16 +736,28 @@ def _is_expected_scrolled_residue(ansi_text: str, expected_message: str) -> bool
 
 
 def _all_visible_styled_as_placeholder(ansi_segment: str) -> bool:
-    """Return True only when every non-whitespace character is dim or muted-gray."""
+    """Return True only when every non-whitespace character is dim or muted-gray.
+
+    A reverse-video cell is the terminal's cursor block, not a different style:
+    Command Code paints it over the first placeholder character, then resets
+    SGR before the muted-gray remainder. Judging that one character on its own
+    colours would reject the whole line, so it is skipped - but a placeholder
+    claim still needs at least one character actually dim or gray, which keeps
+    a highlighted (all reverse-video) real draft from reading as empty.
+    """
     dim = False
     fg_gray = False
+    reverse = False
     has_visible = False
+    placeholder_styled = False
     pos = 0
     for match in SGR_RE.finditer(ansi_segment):
         chunk = ansi_segment[pos:match.start()]
         if any(not ch.isspace() for ch in chunk):
             has_visible = True
-            if not (dim or fg_gray):
+            if dim or fg_gray:
+                placeholder_styled = True
+            elif not reverse:
                 return False
         params = match.group(1) or "0"
         parts = [int(part or "0") for part in params.split(";")]
@@ -755,6 +767,11 @@ def _all_visible_styled_as_placeholder(ansi_segment: str) -> bool:
             if code == 0:
                 dim = False
                 fg_gray = False
+                reverse = False
+            elif code == 7:
+                reverse = True
+            elif code == 27:
+                reverse = False
             elif code == 2:
                 dim = True
             elif code == 22:
@@ -787,6 +804,8 @@ def _all_visible_styled_as_placeholder(ansi_segment: str) -> bool:
     tail = ansi_segment[pos:]
     if any(not ch.isspace() for ch in tail):
         has_visible = True
-        if not (dim or fg_gray):
+        if dim or fg_gray:
+            placeholder_styled = True
+        elif not reverse:
             return False
-    return has_visible
+    return has_visible and placeholder_styled

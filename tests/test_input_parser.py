@@ -212,6 +212,29 @@ def test_bright_placeholder_prefix_text_is_occupied():
     assert state.text_after_prompt == "Type a message now"
 
 
+def test_placeholder_with_reverse_video_cursor_cell_is_empty():
+    # Real Command Code composer: the cursor block paints the first character
+    # in reverse video and resets SGR before the muted-gray remainder. Judging
+    # that one cell on its own colours read the empty composer as occupied and
+    # stranded peer messages addressed to this pane.
+    text = "❯ \x1b[0m\x1b[7mA\x1b[0m\x1b[38;2;138;148;168msk your question...\x1b[0m"
+
+    state = inspect_input(text, expected_message="[report-bus→talkback] ping")
+
+    assert state.kind == "empty"
+
+
+def test_fully_reverse_video_draft_is_occupied_not_empty():
+    # A highlighted real draft must not pass as a placeholder: nothing on the
+    # line is dim or muted-gray, so there is no evidence of hint text.
+    text = "❯ \x1b[7mactual selected draft\x1b[0m"
+
+    state = inspect_input(text, expected_message="[lead→dev-back] ping")
+
+    assert state.kind == "occupied"
+    assert state.text_after_prompt == "actual selected draft"
+
+
 def test_expected_message_with_extra_text_is_occupied():
     text = "❯ \x1b[38;2;255;255;255m[lead→dev-back] ping plus extra\x1b[0m"
 
