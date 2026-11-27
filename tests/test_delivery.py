@@ -1252,6 +1252,77 @@ def test_verify_reports_unreadable_after_full_schedule(tmp_path):
     asyncio.run(scenario())
 
 
+class ScrolledClient(FakeClient):
+    """FakeClient whose pane reports a viewport parked away from the composer.
+
+    While scrolled, the visible screen shows transcript history - here an
+    unrelated message - instead of the input box. The `recent` source still
+    renders the live composer.
+    """
+
+    def __init__(self, reads, recent_reads, offset=204):
+        super().__init__(reads)
+        self.recent_reads = list(recent_reads)
+        self.offset = offset
+
+    async def request(self, method, params):
+        if method == "pane.get":
+            self.requests.append((method, params))
+            return {"type": "pane_info", "pane": {
+                "pane_id": params["pane_id"],
+                "scroll": {"offset_from_bottom": self.offset,
+                           "max_offset_from_bottom": 1141,
+                           "viewport_rows": 70}}}
+        if method == "pane.read" and params.get("source") == "recent":
+            self.requests.append((method, params))
+            if not self.recent_reads:
+                raise AssertionError("unexpected recent read")
+            return {"type": "pane_read", "read": {"text": self.recent_reads.pop(0),
+                                                  "pane_id": params["pane_id"]}}
+        return await super().request(method, params)
+
+
+def test_scrolled_viewport_reads_the_composer_from_recent_source(tmp_path):
+    async def scenario():
+        # The visible screen holds someone else's transcript line, which would
+        # read as an occupied draft and strand the message.
+        history = "[other→monitor] 历史消息正文，不是我们的输入框"
+        client = ScrolledClient([history], [EMPTY_PROMPT] * 6)
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+
+        result = await DeliveryService(client, FakeRegistry(), state).deliver(
+            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+
+        assert result.delivered is True, result.reason
+        sources = [params.get("source") for method, params in client.requests
+                   if method == "pane.read"]
+        assert sources and sources[0] == "recent"
+        sends = [params for method, params in client.requests if method == "pane.send_input"]
+        assert len(sends) == 1
+
+    asyncio.run(scenario())
+
+
+def test_scroll_lookup_failure_falls_back_to_visible_read(tmp_path):
+    async def scenario():
+        # The default FakeClient raises on pane.get, standing in for a server
+        # without that method: delivery must still work off the visible screen.
+        client = FakeClient([EMPTY_PROMPT, EMPTY_PROMPT])
+        state = TalkbackState(tmp_path / "state.db")
+        state.init()
+
+        result = await DeliveryService(client, FakeRegistry(), state).deliver(
+            parse_message(MESSAGE_TEXT, ROLES, ALIASES))
+
+        assert result.delivered is True, result.reason
+        sources = [params.get("source") for method, params in client.requests
+                   if method == "pane.read"]
+        assert sources and all(source == "visible" for source in sources)
+
+    asyncio.run(scenario())
+
+
 def test_delivery_accepts_recipient_ack_during_verification(tmp_path):
     async def scenario():
         message = parse_message(MESSAGE_TEXT, ROLES, ALIASES)

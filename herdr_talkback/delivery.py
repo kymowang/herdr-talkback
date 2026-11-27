@@ -236,10 +236,30 @@ class DeliveryService:
         )
 
     async def _read_input(self, pane_id: str) -> str:
+        source = "visible"
+        scroll = await self._scroll_offset(pane_id)
+        if scroll:
+            # The viewport is parked away from the live composer, so the visible
+            # screen holds transcript text instead of the input box. Reading it
+            # reports unrelated history as the draft (or nothing as unreadable).
+            # `recent` renders the tail of the session regardless of scroll, so
+            # the composer is readable while the user keeps their scroll position.
+            source = "recent"
         result = await self.client.request(
-            "pane.read", {"pane_id": pane_id, "source": "visible", "format": "ansi"}
+            "pane.read", {"pane_id": pane_id, "source": source, "format": "ansi"}
         )
         return result["read"]["text"]
+
+    async def _scroll_offset(self, pane_id: str) -> int:
+        try:
+            result = await self.client.request("pane.get", {"pane_id": pane_id})
+        except Exception:
+            # Older servers may not expose pane.get; fall back to the visible read.
+            return 0
+        pane = result.get("pane") if isinstance(result, dict) else None
+        scroll = pane.get("scroll") if isinstance(pane, dict) else None
+        offset = scroll.get("offset_from_bottom") if isinstance(scroll, dict) else None
+        return offset if isinstance(offset, int) and offset > 0 else 0
 
     async def _recover_stale_input(self, pane_id, initial, message, attempt):
         # Only the composer counts: status lines, token counters and spinners
